@@ -219,7 +219,7 @@ class DataProcessor:
     @staticmethod
     def calculate_dff(data: pd.DataFrame, F0: np.ndarray) -> pd.DataFrame:
         """Calculate ΔF/F₀"""
-        return (data.div(F0, axis=0) -1) * 100
+        return (data.div(F0, axis=0) -1)
 
     @staticmethod
     def calculate_peak_response(data: pd.DataFrame, start_frame: int = None) -> pd.Series:
@@ -260,6 +260,7 @@ class WellPlateLabeler(QMainWindow):
         # Initialize data storage
         self.raw_data = None
         self.dff_data = None
+        self.processed_time_points = None
 
         # Define a list of default colors that are easily distinguishable
         self.default_colors = [
@@ -349,19 +350,45 @@ class WellPlateLabeler(QMainWindow):
         mode_layout.addWidget(self.mode_selector)
         main_layout.addLayout(mode_layout)
 
-        # Input fields
+        # Input fields with checkboxes
+        input_group = QWidget()
+        input_layout = QGridLayout()
+        input_group.setLayout(input_layout)
+
+        # Agonist input and checkbox
         self.label_input = QLineEdit(placeholderText="Enter label for selected wells")
+        self.label_checkbox = QCheckBox("Apply")
+        self.label_checkbox.setChecked(True)
+        input_layout.addWidget(QLabel("Agonist:"), 0, 0)
+        input_layout.addWidget(self.label_input, 0, 1)
+        input_layout.addWidget(self.label_checkbox, 0, 2)
+
+        # Concentration input and checkbox
         self.starting_conc_input = QLineEdit(placeholderText="Starting concentration (µM)")
+        self.concentration_checkbox = QCheckBox("Apply")
+        self.concentration_checkbox.setChecked(True)
+        input_layout.addWidget(QLabel("Concentration:"), 1, 0)
+        input_layout.addWidget(self.starting_conc_input, 1, 1)
+        input_layout.addWidget(self.concentration_checkbox, 1, 2)
+
+        # Sample ID input and checkbox
         self.sample_id_input = QLineEdit(placeholderText="Enter sample ID")
+        self.sample_id_checkbox = QCheckBox("Apply")
+        self.sample_id_checkbox.setChecked(True)
+        input_layout.addWidget(QLabel("Sample ID:"), 2, 0)
+        input_layout.addWidget(self.sample_id_input, 2, 1)
+        input_layout.addWidget(self.sample_id_checkbox, 2, 2)
+
+        # Color selection and checkbox
         self.color_button = QPushButton("Select Color")
         self.color_button.clicked.connect(self.select_color)
+        self.color_checkbox = QCheckBox("Apply")
+        self.color_checkbox.setChecked(True)
+        input_layout.addWidget(QLabel("Color:"), 3, 0)
+        input_layout.addWidget(self.color_button, 3, 1)
+        input_layout.addWidget(self.color_checkbox, 3, 2)
 
-        input_layout = QHBoxLayout()
-        input_layout.addWidget(self.label_input)
-        input_layout.addWidget(self.starting_conc_input)
-        input_layout.addWidget(self.sample_id_input)
-        input_layout.addWidget(self.color_button)
-        main_layout.addLayout(input_layout)
+        main_layout.addWidget(input_group)
 
         # Action buttons
         action_layout = QHBoxLayout()
@@ -663,6 +690,14 @@ class WellPlateLabeler(QMainWindow):
         # Define colors for groups
         colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
 
+
+        # Add legend to individual traces plot
+        self.summary_plot_window.individual_plot.addLegend(offset=(10, 10))  # Offset from top-left
+
+        # Add legend to mean traces plot
+        self.summary_plot_window.mean_plot.addLegend(offset=(10, 10))
+
+
         # Plot traces for each group
         for i, (group_name, well_ids) in enumerate(grouped_data.items()):
             logger.info(f"Plotting group '{group_name}' with {len(well_ids)} wells")
@@ -678,15 +713,15 @@ class WellPlateLabeler(QMainWindow):
                 # Get group data
                 group_data = self.dff_data.loc[well_ids]
 
-                # Plot individual traces with lighter color
+                # Plot individual traces with proper legend
                 for well_id in well_ids:
                     trace_data = np.array(self.dff_data.loc[well_id])
-                    if len(times) == len(trace_data):  # Verify lengths match
+                    if len(times) == len(trace_data):
                         self.summary_plot_window.individual_plot.plot(
                             times,
                             trace_data,
                             pen=light_pen,
-                            name=group_name if well_id == well_ids[0] else None
+                            name=group_name if well_id == well_ids[0] else None  # Legend only for first trace
                         )
                     else:
                         logger.error(f"Data length mismatch for well {well_id}: times={len(times)}, data={len(trace_data)}")
@@ -740,7 +775,19 @@ class WellPlateLabeler(QMainWindow):
                     beam=0.2,
                     pen=pg.mkPen(main_color, width=2)
                 )
+
                 self.summary_plot_window.responses_plot.addItem(error)
+
+                # Add value label above bar
+                text = pg.TextItem(
+                       text=f'{peak_mean:.1f}±{peak_sem:.1f}',
+                       color=main_color,
+                       anchor=(0.5, 1)
+                )
+                text.setPos(i, peak_mean + peak_sem * 2)  # Position above error bar
+                self.summary_plot_window.responses_plot.addItem(text)
+
+
 
                 logger.info(f"Successfully plotted group {group_name}")
 
@@ -1007,22 +1054,32 @@ class WellPlateLabeler(QMainWindow):
     def apply_label(self):
         """Apply label, concentration, and color to selected wells"""
         mode = self.mode_selector.currentText()
-        sample_id = self.sample_id_input.text()
 
         if mode == "Simple Label":
-            label = self.label_input.text()
-            concentration = self.starting_conc_input.text()
             for idx in self.selected_wells:
-                self.well_data[idx]["label"] = label
-                self.well_data[idx]["concentration"] = f"{concentration} µM" if concentration else ""
-                self.well_data[idx]["sample_id"] = sample_id
-                # Only update color if user has selected a new one (different from default)
-                if self.current_color.name() != self.default_colors[idx % len(self.default_colors)]:
-                    self.well_data[idx]["color"] = self.current_color.name()
+                # Only update fields that are checked
+                if self.label_checkbox.isChecked():
+                    self.well_data[idx]["label"] = self.label_input.text()
+
+                if self.concentration_checkbox.isChecked():
+                    concentration = self.starting_conc_input.text()
+                    self.well_data[idx]["concentration"] = f"{concentration} µM" if concentration else ""
+
+                if self.sample_id_checkbox.isChecked():
+                    self.well_data[idx]["sample_id"] = self.sample_id_input.text()
+
+                if self.color_checkbox.isChecked():
+                    if self.current_color.name() != self.default_colors[idx % len(self.default_colors)]:
+                        self.well_data[idx]["color"] = self.current_color.name()
+
                 self.update_button(idx)
 
         elif mode == "Log10 Series":
             try:
+                if not self.concentration_checkbox.isChecked():
+                    QMessageBox.warning(self, "Input Error", "Concentration must be enabled for Log10 Series")
+                    return
+
                 starting_conc = float(self.starting_conc_input.text())
             except ValueError:
                 QMessageBox.warning(self, "Input Error", "Invalid starting concentration")
@@ -1032,30 +1089,35 @@ class WellPlateLabeler(QMainWindow):
                 QMessageBox.warning(self, "Selection Error", "Select at least 2 wells for Log10 Series")
                 return
 
-            # Calculate true log10 series concentrations
+            # Calculate log10 series concentrations
             sorted_indices = sorted(self.selected_wells)
             num_wells = len(sorted_indices)
             concentrations = [starting_conc / (10 ** i) for i in range(num_wells)]
 
             for idx, conc in zip(sorted_indices, concentrations):
-                self.well_data[idx]["concentration"] = f"{conc:.2f} µM"
-                self.well_data[idx]["label"] = self.label_input.text()
-                self.well_data[idx]["sample_id"] = sample_id
-                if self.current_color.name() != self.default_colors[idx % len(self.default_colors)]:
-                    self.well_data[idx]["color"] = self.current_color.name()
+                if self.concentration_checkbox.isChecked():
+                    self.well_data[idx]["concentration"] = f"{conc:.2f} µM"
+                if self.label_checkbox.isChecked():
+                    self.well_data[idx]["label"] = self.label_input.text()
+                if self.sample_id_checkbox.isChecked():
+                    self.well_data[idx]["sample_id"] = self.sample_id_input.text()
+                if self.color_checkbox.isChecked():
+                    if self.current_color.name() != self.default_colors[idx % len(self.default_colors)]:
+                        self.well_data[idx]["color"] = self.current_color.name()
                 self.update_button(idx)
 
         elif mode == "Clear Wells":
             for idx in self.selected_wells:
-                # Reset to default color when clearing
-                default_color = self.default_colors[idx % len(self.default_colors)]
-                self.well_data[idx] = {
-                    "well_id": self.well_data[idx]["well_id"],
-                    "label": "",
-                    "concentration": "",
-                    "sample_id": "",
-                    "color": default_color
-                }
+                # Only clear fields that are checked
+                if self.label_checkbox.isChecked():
+                    self.well_data[idx]["label"] = ""
+                if self.concentration_checkbox.isChecked():
+                    self.well_data[idx]["concentration"] = ""
+                if self.sample_id_checkbox.isChecked():
+                    self.well_data[idx]["sample_id"] = ""
+                if self.color_checkbox.isChecked():
+                    default_color = self.default_colors[idx % len(self.default_colors)]
+                    self.well_data[idx]["color"] = default_color
                 self.update_button(idx)
 
         # Update all visible plot windows
@@ -1140,7 +1202,9 @@ class WellPlateLabeler(QMainWindow):
         try:
             # Work with a copy of the raw data
             processed_data = self.raw_data.copy()
-            self.processed_time_points = pd.to_numeric(processed_data.columns, errors='coerce')
+
+            # Initialize time points
+            all_time_points = pd.to_numeric(processed_data.columns, errors='coerce')
 
             # Remove artifact if enabled
             if self.remove_artifact:
@@ -1150,13 +1214,16 @@ class WellPlateLabeler(QMainWindow):
 
                 # Store the time points before removing data
                 self.processed_time_points = np.concatenate([
-                    self.processed_time_points[:start_idx],
-                    self.processed_time_points[end_idx:]
+                    all_time_points[:start_idx],
+                    all_time_points[end_idx:]
                 ])
 
                 # Remove artifact points from data
                 processed_data = processed_data.drop(processed_data.columns[start_idx:end_idx], axis=1)
                 processed_data.columns = self.processed_time_points  # Update column names
+            else:
+                # If no artifact removal, use all time points
+                self.processed_time_points = all_time_points
 
             # Calculate F0
             F0 = self.processor.get_F0(processed_data,
@@ -1172,6 +1239,7 @@ class WellPlateLabeler(QMainWindow):
         except Exception as e:
             logger.error(f"Error processing data: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to process data: {str(e)}")
+
 
 
     def update_plots(self):
