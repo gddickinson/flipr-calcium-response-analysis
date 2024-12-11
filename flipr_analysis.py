@@ -21,11 +21,30 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils.dataframe import dataframe_to_rows
 import datetime
 from io import StringIO
+import re
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+# helper functions for fmg file export
+def rgb_to_decimal(color_str):
+    """Convert RGB hex color to decimal integer for FLIPR format"""
+    # Remove '#' if present and convert to int
+    color = int(color_str.lstrip('#'), 16)
+    return color
+
+def format_concentration(conc_str):
+    """Format concentration string to numeric value"""
+    if not conc_str:
+        return 0
+    # Extract numeric value from string like "10 µM"
+    match = re.search(r'([\d.]+)', conc_str)
+    return float(match.group(1)) if match else 0
+
+
+# class definitions
 
 class ParametersDialog(QDialog):
     def __init__(self, parent=None):
@@ -392,23 +411,38 @@ class WellPlateLabeler(QMainWindow):
         top_left_label.setStyleSheet("background-color: lightgray;")
         top_left_label.setAlignment(Qt.AlignCenter)
         top_left_label.setCursor(Qt.PointingHandCursor)
-        top_left_label.mousePressEvent = lambda event: self.toggle_all_selection()
-        plate_layout.addWidget(top_left_label, 0, 0)
+        # Create a custom class to handle the mouse press event
+        class ClickableLabel(QLabel):
+            def __init__(self, parent, callback):
+                super().__init__(parent)
+                self.callback = callback
+            def mousePressEvent(self, event):
+                self.callback()
 
-        # Column headers (numbers only to save space)
+        # Use the custom label class with direct method reference
+        toggle_all_label = ClickableLabel(None, self.toggle_all_selection)
+        toggle_all_label.setText("✓")
+        toggle_all_label.setStyleSheet("background-color: lightgray;")
+        toggle_all_label.setAlignment(Qt.AlignCenter)
+        toggle_all_label.setCursor(Qt.PointingHandCursor)
+        plate_layout.addWidget(toggle_all_label, 0, 0)
+
+        # Column headers
         for j, col in enumerate(cols):
-            col_label = QLabel(str(col))
+            # Create column header with direct method reference
+            col_label = ClickableLabel(None, lambda col=j: self.toggle_column_selection(col))
+            col_label.setText(str(col))
             col_label.setAlignment(Qt.AlignCenter)
             col_label.setCursor(Qt.PointingHandCursor)
-            col_label.mousePressEvent = lambda event, col_idx=j: self.toggle_column_selection(col_idx)
             plate_layout.addWidget(col_label, 0, j + 1)
 
         # Row headers and wells
         for i, row in enumerate(rows):
-            row_label = QLabel(row)
+            # Create row header with direct method reference
+            row_label = ClickableLabel(None, lambda row=i: self.toggle_row_selection(row))
+            row_label.setText(row)
             row_label.setAlignment(Qt.AlignCenter)
             row_label.setCursor(Qt.PointingHandCursor)
-            row_label.mousePressEvent = lambda event, row_idx=i: self.toggle_row_selection(row_idx)
             plate_layout.addWidget(row_label, i + 1, 0)
 
             for j, col in enumerate(cols):
@@ -881,6 +915,17 @@ class WellPlateLabeler(QMainWindow):
     def create_menus(self):
         """Create menu bar and menus"""
         menubar = self.menuBar()
+
+        # Add File menu
+        file_menu = menubar.addMenu('File')
+
+        # Add export FLIPR layout action
+        export_flipr_action = QAction('Export FLIPR Layout...', self)
+        export_flipr_action.triggered.connect(self.export_to_flipr)
+        file_menu.addAction(export_flipr_action)
+
+        # Add separator
+        file_menu.addSeparator()
 
         # Analysis menu
         analysis_menu = menubar.addMenu('Analysis')
@@ -1368,7 +1413,14 @@ class WellPlateLabeler(QMainWindow):
         """Toggle well selection and update plots immediately"""
         if index in self.selected_wells:
             self.selected_wells.remove(index)
-            self.wells[index].setStyleSheet(f"background-color: {self.well_data[index]['color']}; color: black;")
+            self.wells[index].setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {self.well_data[index]['color']};
+                    padding: 2px;
+                    font-size: 12pt;
+                    color: black;
+                }}
+            """)
 
             # Remove trace from all visible plot windows
             well_id = self.well_data[index]["well_id"]
@@ -1381,7 +1433,14 @@ class WellPlateLabeler(QMainWindow):
                 del self.dff_plot_window.plot_items[well_id]
         else:
             self.selected_wells.add(index)
-            self.wells[index].setStyleSheet("background-color: lightblue; color: black;")
+            self.wells[index].setStyleSheet("""
+                QPushButton {
+                    background-color: lightblue;
+                    padding: 2px;
+                    font-size: 12pt;
+                    color: black;
+                }
+            """)
 
             # Add trace to all visible plot windows
             if self.raw_data is not None:
@@ -1663,6 +1722,122 @@ class WellPlateLabeler(QMainWindow):
                 if self.dff_plot_window.isVisible() and self.dff_data is not None:
                     values = self.dff_data.loc[well_id]
                     self.dff_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
+
+
+    def export_flipr_format(self, output_file):
+        """Export plate layout to FLIPR .fmg format"""
+        # Create plate data section
+        plate_section = ["[CFLIPRPlateData]",
+                        "Object=CFLIPRPlateData",
+                        "TotalWells=96"]
+
+        # Map wells to group IDs
+        group_map = {}  # Keep track of unique groups
+        next_group_id = 4  # Start after default groups (0-3)
+
+        # Generate plate assignments
+        for i in range(96):
+            row = i // 12 + 1
+            col = i % 12 + 1
+
+            # Create unique group identifier
+            well = self.well_data[i]
+            if well["label"] or well["concentration"]:
+                group_key = (well["label"], well["concentration"])
+                if group_key not in group_map:
+                    group_map[group_key] = next_group_id
+                    next_group_id += 1
+                group_id = group_map[group_key]
+            else:
+                group_id = 0  # Default/empty group
+
+            plate_section.append(f"Row{row}Col{col}={group_id}")
+
+        # Create groups section
+        groups_section = [
+            "[CFLIPRGroupArray]",
+            f"Size={len(group_map) + 4}"  # Include default groups
+        ]
+
+        # Add default groups (0-3)
+        default_groups = [
+            ("NO_GROUP", 0),
+            ("Positive Controls", 1),
+            ("Negative Controls", 2),
+            ("BF Controls", 3)
+        ]
+
+        for name, group_id in default_groups:
+            groups_section.append(f"[CFLIPRGroup{group_id}]")
+            groups_section.extend([
+                "Object=CFLIPRGroup",
+                f"GroupID={group_id}",
+                "Concentration=10",
+                "ConcentrationUnits=µM",
+                "Color=16777215",
+                f"Type={1 if group_id > 0 else 0}",
+                "Operation=0",
+                "StartValue=0",
+                "IncrementValue=0.1",
+                "Direction=0",
+                "Replicate=2",
+                "ReplicateCount=1",
+                "CurrentIndex=1",
+                f"GroupName={name}",
+                "Notes=",
+                "ExcludeFromStatisticChart=FALSE"
+            ])
+
+        # Add user-defined groups
+        for (label, conc), group_id in group_map.items():
+            groups_section.append(f"[CFLIPRGroup{group_id}]")
+
+            # Find first well with this group to get color
+            well_idx = next(i for i in range(96)
+                           if self.well_data[i]["label"] == label
+                           and self.well_data[i]["concentration"] == conc)
+            color = rgb_to_decimal(self.well_data[well_idx]["color"])
+
+            groups_section.extend([
+                "Object=CFLIPRGroup",
+                f"GroupID={group_id}",
+                f"Concentration={format_concentration(conc)}",
+                "ConcentrationUnits=µM",
+                f"Color={color}",
+                "Type=2",  # User-defined group
+                "Operation=0",
+                "StartValue=0",
+                "IncrementValue=0.1",
+                "Direction=0",
+                "Replicate=2",
+                "ReplicateCount=1",
+                "CurrentIndex=1",
+                f"GroupName={label}",
+                "Notes=",
+                "ExcludeFromStatisticChart=FALSE"
+            ])
+
+        # Write complete file
+        with open(output_file, 'w') as f:
+            f.write('\n'.join(plate_section + groups_section))
+
+    def export_to_flipr(self):
+        """Export current plate layout to FLIPR .fmg format"""
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export FLIPR Layout", "",
+            "FLIPR Files (*.fmg);;All Files (*)",
+            options=options
+        )
+        if file_path:
+            try:
+                self.export_flipr_format(file_path)
+                QMessageBox.information(self, "Success",
+                                      "Plate layout exported successfully")
+            except Exception as e:
+                QMessageBox.critical(self, "Error",
+                                   f"Failed to export FLIPR layout: {str(e)}")
+
 
 
 if __name__ == "__main__":
