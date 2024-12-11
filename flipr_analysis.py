@@ -8,12 +8,19 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QGridLayout, QWidget, QPushButton,
     QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QColorDialog, QComboBox,
     QMessageBox, QFileDialog, QCheckBox, QTabWidget,
-    QMenuBar, QMenu, QAction, QDialog, QSpinBox, QFormLayout, QDialogButtonBox
+    QMenuBar, QMenu, QAction, QDialog, QSpinBox, QFormLayout, QDialogButtonBox,
+    QGroupBox, QScrollArea, QTextEdit
 )
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtCore import Qt
 import pyqtgraph as pg
 import json
+
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
+from openpyxl.utils.dataframe import dataframe_to_rows
+import datetime
+from io import StringIO
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -136,7 +143,7 @@ class RawPlotWindow(BasePlotWindow):
 class DFFPlotWindow(BasePlotWindow):
     def __init__(self, parent=None):
         super().__init__(title="ΔF/F₀ Traces", parent=parent)
-        self.plot_widget.setLabel('left', "ΔF/F₀ (%)")
+        self.plot_widget.setLabel('left', "Intensity (ΔF/F₀)")
 
 
 class SummaryPlotWindow(QMainWindow):
@@ -168,17 +175,17 @@ class SummaryPlotWindow(QMainWindow):
         # Create plot widgets for each tab
         self.individual_plot = pg.PlotWidget()
         self.individual_plot.setBackground('w')
-        self.individual_plot.setLabel('left', "ΔF/F₀ (%)")
+        self.individual_plot.setLabel('left', "ΔF/F₀")
         self.individual_plot.setLabel('bottom', "Time (s)")
 
         self.mean_plot = pg.PlotWidget()
         self.mean_plot.setBackground('w')
-        self.mean_plot.setLabel('left', "ΔF/F₀ (%)")
+        self.mean_plot.setLabel('left', "ΔF/F₀")
         self.mean_plot.setLabel('bottom', "Time (s)")
 
         self.responses_plot = pg.PlotWidget()
         self.responses_plot.setBackground('w')
-        self.responses_plot.setLabel('left', "Peak ΔF/F₀ (%)")
+        self.responses_plot.setLabel('left', "Peak ΔF/F₀")
         self.responses_plot.setLabel('bottom', "Group")
 
         self.normalized_plot = pg.PlotWidget()
@@ -235,7 +242,36 @@ class WellPlateLabeler(QMainWindow):
         super().__init__()
         self.setWindowTitle("FLIPR Analysis")
 
-        # Add analysis parameters
+        # Set window size (width: 1200, height: 800 pixels)
+        self.resize(1000, 800)
+        # To prevent resizing, use:
+        # self.setFixedSize(1200, 800)
+        # To maximise
+        # self.showMaximized()
+        # To center
+        # qr = self.frameGeometry()
+        # cp = QApplication.desktop().availableGeometry().center()
+        # qr.moveCenter(cp)
+        # self.move(qr.topLeft())
+
+        # Set smaller default font size
+        self.default_font = QFont()
+        self.default_font.setPointSize(12)  # Reduce from default size
+        QApplication.setFont(self.default_font)
+
+        # Initialize data and create UI (rest of __init__ remains the same)
+        self.init_data()
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.layout = QVBoxLayout(self.central_widget)
+        self.tab_widget = QTabWidget()
+        self.layout.addWidget(self.tab_widget)
+        self.setup_plate_tab()
+        self.setup_analysis_tab()
+        self.create_menus()
+
+    def init_data(self):
+        """Initialize all data attributes"""
         self.analysis_params = {
             'artifact_start': 18,
             'artifact_end': 30,
@@ -243,38 +279,21 @@ class WellPlateLabeler(QMainWindow):
             'peak_start_frame': 20
         }
 
-        # Add artifact removal flag
         self.remove_artifact = False
-
-        # Add ionomycin normalization flag
         self.normalize_to_ionomycin = False
-
-        # Initialize plot windows
         self.raw_plot_window = RawPlotWindow()
         self.dff_plot_window = DFFPlotWindow()
         self.summary_plot_window = SummaryPlotWindow()
-
-        # Initialize data processor
         self.processor = DataProcessor()
-
-        # Initialize data storage
         self.raw_data = None
         self.dff_data = None
         self.processed_time_points = None
 
-        # Define a list of default colors that are easily distinguishable
         self.default_colors = [
-            '#1f77b4',  # blue
-            '#ff7f0e',  # orange
-            '#2ca02c',  # green
-            '#d62728',  # red
-            '#9467bd',  # purple
-            '#8c564b',  # brown
-            '#e377c2',  # pink
-            '#7f7f7f',  # gray
+            '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728',
+            '#9467bd', '#8c564b', '#e377c2', '#7f7f7f',
         ]
 
-        # Initialize well_data with default colors cycling through the list
         self.well_data = [
             {
                 "well_id": "",
@@ -288,178 +307,576 @@ class WellPlateLabeler(QMainWindow):
 
         self.selected_wells = set()
         self.current_color = QColor(self.default_colors[0])
-        # Create menus
-        self.create_menus()
-        self.initUI()
 
-    def initUI(self):
-        main_widget = QWidget()
-        main_layout = QVBoxLayout()
-        self.setCentralWidget(main_widget)
-
-        # Add plot type selection
-        plot_group = QWidget()
-        plot_layout = QHBoxLayout()
-        plot_group.setLayout(plot_layout)
-
-        # Plot toggle buttons
-        self.raw_plot_button = QPushButton("Raw Traces")
-        self.dff_plot_button = QPushButton("ΔF/F₀ Traces")
-        self.summary_plot_button = QPushButton("Summary Plots")
-
-        # Set up toggle behavior
-        self.raw_plot_button.setCheckable(True)
-        self.dff_plot_button.setCheckable(True)
-        self.summary_plot_button.setCheckable(True)
-
-        # Connect signals
-        self.raw_plot_button.clicked.connect(lambda: self.toggle_plot_window('raw'))
-        self.dff_plot_button.clicked.connect(lambda: self.toggle_plot_window('dff'))
-        self.summary_plot_button.clicked.connect(lambda: self.toggle_plot_window('summary'))
-
-        plot_layout.addWidget(self.raw_plot_button)
-        plot_layout.addWidget(self.dff_plot_button)
-        plot_layout.addWidget(self.summary_plot_button)
-
-        main_layout.addWidget(plot_group)
-
-        # parameters inputs
-        params_group = QWidget()
-        params_layout = QHBoxLayout()
-        params_group.setLayout(params_layout)
-
-        # Add injection artifact removal checkbox
-        self.artifact_checkbox = QCheckBox("Remove Injection Artifact")
-        self.artifact_checkbox.setChecked(self.remove_artifact)
-        self.artifact_checkbox.stateChanged.connect(self.toggle_artifact_removal)
-        params_layout.addWidget(self.artifact_checkbox)
-
-        # Add ionomycin normalization checkbox
-        self.ionomycin_checkbox = QCheckBox("Normalize to Ionomycin")
-        self.ionomycin_checkbox.setChecked(self.normalize_to_ionomycin)
-        self.ionomycin_checkbox.stateChanged.connect(self.toggle_ionomycin_normalization)
-        params_layout.addWidget(self.ionomycin_checkbox)
-
-        main_layout.addWidget(params_group)
-
-        # Mode selection
-        mode_layout = QHBoxLayout()
-        self.mode_selector = QComboBox()
-        self.mode_selector.addItems(["Simple Label", "Log10 Series", "Clear Wells"])
-        mode_layout.addWidget(QLabel("Mode:"))
-        mode_layout.addWidget(self.mode_selector)
-        main_layout.addLayout(mode_layout)
-
-        # Input fields with checkboxes
-        input_group = QWidget()
+    def create_compact_input_fields(self):
+        """Create more compact input fields layout"""
+        input_group = QGroupBox("Well Properties")
         input_layout = QGridLayout()
-        input_group.setLayout(input_layout)
+        input_layout.setSpacing(2)
+        input_layout.setContentsMargins(5, 5, 5, 5)
 
-        # Agonist input and checkbox
-        self.label_input = QLineEdit(placeholderText="Enter label for selected wells")
-        self.label_checkbox = QCheckBox("Apply")
+        # Make input fields more compact
+        self.label_input = QLineEdit()
+        self.label_input.setPlaceholderText("Agonist label")
+        self.label_checkbox = QCheckBox()
         self.label_checkbox.setChecked(True)
-        input_layout.addWidget(QLabel("Agonist:"), 0, 0)
-        input_layout.addWidget(self.label_input, 0, 1)
-        input_layout.addWidget(self.label_checkbox, 0, 2)
 
-        # Concentration input and checkbox
-        self.starting_conc_input = QLineEdit(placeholderText="Starting concentration (µM)")
-        self.concentration_checkbox = QCheckBox("Apply")
+        self.starting_conc_input = QLineEdit()
+        self.starting_conc_input.setPlaceholderText("Conc (µM)")
+        self.concentration_checkbox = QCheckBox()
         self.concentration_checkbox.setChecked(True)
-        input_layout.addWidget(QLabel("Concentration:"), 1, 0)
-        input_layout.addWidget(self.starting_conc_input, 1, 1)
-        input_layout.addWidget(self.concentration_checkbox, 1, 2)
 
-        # Sample ID input and checkbox
-        self.sample_id_input = QLineEdit(placeholderText="Enter sample ID")
-        self.sample_id_checkbox = QCheckBox("Apply")
+        self.sample_id_input = QLineEdit()
+        self.sample_id_input.setPlaceholderText("Sample ID")
+        self.sample_id_checkbox = QCheckBox()
         self.sample_id_checkbox.setChecked(True)
-        input_layout.addWidget(QLabel("Sample ID:"), 2, 0)
-        input_layout.addWidget(self.sample_id_input, 2, 1)
-        input_layout.addWidget(self.sample_id_checkbox, 2, 2)
 
-        # Color selection and checkbox
-        self.color_button = QPushButton("Select Color")
+        self.color_button = QPushButton()
+        self.color_button.setMaximumWidth(50)
         self.color_button.clicked.connect(self.select_color)
-        self.color_checkbox = QCheckBox("Apply")
+        self.color_checkbox = QCheckBox()
         self.color_checkbox.setChecked(True)
-        input_layout.addWidget(QLabel("Color:"), 3, 0)
-        input_layout.addWidget(self.color_button, 3, 1)
-        input_layout.addWidget(self.color_checkbox, 3, 2)
 
-        main_layout.addWidget(input_group)
+        # Add to layout with minimal spacing
+        labels = ["Agonist:", "Conc:", "ID:", "Color:"]
+        widgets = [
+            (self.label_input, self.label_checkbox),
+            (self.starting_conc_input, self.concentration_checkbox),
+            (self.sample_id_input, self.sample_id_checkbox),
+            (self.color_button, self.color_checkbox)
+        ]
 
-        # Action buttons
-        action_layout = QHBoxLayout()
-        apply_button = QPushButton("Apply Label")
-        apply_button.clicked.connect(self.apply_label)
-        clear_button = QPushButton("Clear Selection")
-        clear_button.clicked.connect(self.clear_selection)
-        save_button = QPushButton("Save Layout")
-        save_button.clicked.connect(self.save_layout)
-        load_button = QPushButton("Load Layout")
-        load_button.clicked.connect(self.load_layout)
-        load_data_button = QPushButton("Load Data")
-        load_data_button.clicked.connect(self.open_file_dialog)
+        for i, (label, (widget, checkbox)) in enumerate(zip(labels, widgets)):
+            input_layout.addWidget(QLabel(label), i, 0)
+            input_layout.addWidget(widget, i, 1)
+            input_layout.addWidget(checkbox, i, 2)
 
-        action_layout.addWidget(apply_button)
-        action_layout.addWidget(clear_button)
-        action_layout.addWidget(save_button)
-        action_layout.addWidget(load_button)
-        action_layout.addWidget(load_data_button)
-        main_layout.addLayout(action_layout)
+        input_group.setLayout(input_layout)
+        return input_group
 
-        # 96-Well Plate Layout
+    def create_compact_action_buttons(self):
+        """Create action buttons in a more compact layout"""
+        action_layout = QGridLayout()
+        action_layout.setSpacing(2)
+
+        buttons = [
+            ("Apply Label", self.apply_label),
+            ("Clear Selection", self.clear_selection),
+            ("Save Layout", self.save_layout),
+            ("Load Layout", self.load_layout),
+            ("Load Data", self.open_file_dialog)
+        ]
+
+        for i, (text, callback) in enumerate(buttons):
+            btn = QPushButton(text)
+            btn.clicked.connect(callback)
+            btn.setMaximumWidth(100)
+            row = 0
+            col = i
+            action_layout.addWidget(btn, row, col)
+
+        return action_layout
+
+    def create_compact_well_plate_grid(self):
+        """Create a more compact well plate grid"""
+        plate_widget = QWidget()
         plate_layout = QGridLayout()
+        plate_layout.setSpacing(1)  # Minimal spacing between wells
+
         rows = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
         cols = range(1, 13)
         self.wells = []
 
-        # Add top-left corner label for selecting all wells
-        top_left_label = QLabel("", alignment=Qt.AlignCenter)
+        # Top-left corner for selecting all wells
+        top_left_label = QLabel("✓")
         top_left_label.setStyleSheet("background-color: lightgray;")
+        top_left_label.setAlignment(Qt.AlignCenter)
         top_left_label.setCursor(Qt.PointingHandCursor)
-        # Using a regular function instead of lambda for clarity
-        def all_wells_clicked(event):
-            self.toggle_all_selection()
-        top_left_label.mousePressEvent = all_wells_clicked
+        top_left_label.mousePressEvent = lambda event: self.toggle_all_selection()
         plate_layout.addWidget(top_left_label, 0, 0)
 
-        # Add column headers
+        # Column headers (numbers only to save space)
         for j, col in enumerate(cols):
-            col_label = QLabel(str(col), alignment=Qt.AlignCenter)
+            col_label = QLabel(str(col))
+            col_label.setAlignment(Qt.AlignCenter)
             col_label.setCursor(Qt.PointingHandCursor)
-            # Create a closure to properly capture the column index
-            def make_column_clicked(col_idx):
-                return lambda event: self.toggle_column_selection(col_idx)
-            col_label.mousePressEvent = make_column_clicked(j)
+            col_label.mousePressEvent = lambda event, col_idx=j: self.toggle_column_selection(col_idx)
             plate_layout.addWidget(col_label, 0, j + 1)
 
-        # Add row headers and buttons
+        # Row headers and wells
         for i, row in enumerate(rows):
-            row_label = QLabel(row, alignment=Qt.AlignCenter)
+            row_label = QLabel(row)
+            row_label.setAlignment(Qt.AlignCenter)
             row_label.setCursor(Qt.PointingHandCursor)
-            # Create a closure to properly capture the row index
-            def make_row_clicked(row_idx):
-                return lambda event: self.toggle_row_selection(row_idx)
-            row_label.mousePressEvent = make_row_clicked(i)
+            row_label.mousePressEvent = lambda event, row_idx=i: self.toggle_row_selection(row_idx)
             plate_layout.addWidget(row_label, i + 1, 0)
 
             for j, col in enumerate(cols):
                 well_index = i * 12 + j
                 well_id = f"{row}{col}"
-                button = QPushButton(well_id)
-                button.setStyleSheet("background-color: white;")
-                # The well button click handler doesn't need modification as it was working correctly
+                button = QPushButton()
+                button.setMinimumSize(40, 40)  # Smaller fixed size for wells
+                button.setMaximumSize(80, 80)
+                button.setStyleSheet("""
+                    QPushButton {
+                        background-color: white;
+                        padding: 2px;
+                        font-size: 12pt;
+                    }
+                """)
                 button.clicked.connect(lambda checked, idx=well_index: self.toggle_well_selection(idx))
                 self.wells.append(button)
-                # Store the well_id in well_data
                 self.well_data[well_index]["well_id"] = well_id
+                self.update_well_button_text(well_index)  # Initialize button text
                 plate_layout.addWidget(button, i + 1, j + 1)
 
-        main_layout.addLayout(plate_layout)
-        main_widget.setLayout(main_layout)
+        plate_widget.setLayout(plate_layout)
+        return plate_widget
+
+    def update_well_button_text(self, index):
+        """Update well button text in a compact format"""
+        data = self.well_data[index]
+        well_id = data["well_id"]
+
+        # Create compact multi-line text
+        text_parts = [well_id]
+        if data["label"]:
+            text_parts.append(data["label"])
+        if data["concentration"]:
+            # Shorten concentration display
+            conc = data["concentration"].replace(" µM", "µ")
+            text_parts.append(conc)
+        if data["sample_id"]:
+            text_parts.append(data["sample_id"])
+
+        self.wells[index].setText("\n".join(text_parts))
+        self.wells[index].setStyleSheet(f"""
+            QPushButton {{
+                background-color: {data['color']};
+                padding: 2px;
+                font-size: 12pt;
+                text-align: center;
+            }}
+        """)
+
+    def select_color(self):
+        """Open color dialog and set current color"""
+        color = QColorDialog.getColor()
+        if color.isValid():
+            self.current_color = color
+            self.color_button.setStyleSheet(f"background-color: {color.name()}")
+
+
+    def setup_plate_tab(self):
+        """Set up the plate layout tab with scrollable area"""
+        plate_tab = QWidget()
+        plate_layout = QVBoxLayout()
+        plate_layout.setSpacing(2)  # Reduce spacing between elements
+
+        # Create scrollable area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setSpacing(2)
+
+        # Add controls group with more compact layout
+        controls_group = QGroupBox("Plate Controls")
+        controls_layout = QVBoxLayout()
+        controls_layout.setSpacing(2)
+        controls_layout.setContentsMargins(5, 5, 5, 5)
+
+        # Mode selection (more compact)
+        mode_layout = QHBoxLayout()
+        mode_layout.setSpacing(2)
+        self.mode_selector = QComboBox()
+        self.mode_selector.addItems(["Simple Label", "Log10 Series", "Clear Wells"])
+        mode_layout.addWidget(QLabel("Mode:"))
+        mode_layout.addWidget(self.mode_selector)
+        mode_layout.addStretch()
+        controls_layout.addLayout(mode_layout)
+
+        # Compact input fields
+        input_group = self.create_compact_input_fields()
+        controls_layout.addWidget(input_group)
+
+        # Action buttons in two rows to save vertical space
+        action_layout = self.create_compact_action_buttons()
+        controls_layout.addLayout(action_layout)
+
+        controls_group.setLayout(controls_layout)
+        scroll_layout.addWidget(controls_group)
+
+        # Add well plate grid
+        scroll_layout.addWidget(self.create_compact_well_plate_grid())
+
+        scroll.setWidget(scroll_content)
+        plate_layout.addWidget(scroll)
+        plate_tab.setLayout(plate_layout)
+        self.tab_widget.addTab(plate_tab, "Plate Layout")
+
+    def setup_analysis_tab(self):
+        """Set up the analysis tab"""
+        analysis_tab = QWidget()
+        analysis_layout = QVBoxLayout()
+
+        # Plot controls
+        plot_group = QGroupBox("Plot Controls")
+        plot_layout = QVBoxLayout()
+
+        # Plot type selection
+        self.setup_plot_controls(plot_layout)
+
+        # Analysis parameters
+        params_group = QWidget()
+        params_layout = QHBoxLayout()
+
+        # Add checkboxes
+        self.artifact_checkbox = QCheckBox("Remove Injection Artifact")
+        self.artifact_checkbox.setChecked(self.remove_artifact)
+        self.artifact_checkbox.stateChanged.connect(self.toggle_artifact_removal)
+        params_layout.addWidget(self.artifact_checkbox)
+
+        self.ionomycin_checkbox = QCheckBox("Normalize to Ionomycin")
+        self.ionomycin_checkbox.setChecked(self.normalize_to_ionomycin)
+        self.ionomycin_checkbox.stateChanged.connect(self.toggle_ionomycin_normalization)
+        params_layout.addWidget(self.ionomycin_checkbox)
+
+        params_group.setLayout(params_layout)
+        plot_layout.addWidget(params_group)
+
+        plot_group.setLayout(plot_layout)
+        analysis_layout.addWidget(plot_group)
+
+        # Add results display area (placeholder for now)
+        results_group = QGroupBox("Analysis Results")
+        results_layout = QVBoxLayout()
+
+        # Add text area for results
+        self.results_text = QTextEdit()
+        self.results_text.setReadOnly(True)
+        self.results_text.setMinimumHeight(200)
+        results_layout.addWidget(self.results_text)
+
+        # Add export button
+        export_button = QPushButton("Export Results")
+        export_button.clicked.connect(self.export_results)
+        results_layout.addWidget(export_button)
+
+        results_group.setLayout(results_layout)
+        analysis_layout.addWidget(results_group)
+
+        analysis_tab.setLayout(analysis_layout)
+        self.tab_widget.addTab(analysis_tab, "Analysis")
+
+    def update_results_text(self):
+        """Update the results text display with summary statistics"""
+        if self.dff_data is None:
+            self.results_text.setText("No data loaded")
+            return
+
+        # Create string buffer for results
+        buffer = StringIO()
+        buffer.write("Analysis Results Summary\n")
+        buffer.write("=" * 50 + "\n\n")
+
+        # Get grouped data
+        grouped_data = self.group_data_by_metadata()
+
+        # Calculate and display statistics for each group
+        for group_name, well_ids in grouped_data.items():
+            group_data = self.dff_data.loc[well_ids]
+
+            # Calculate peak responses
+            peaks = group_data.max(axis=1)
+            peak_mean = peaks.mean()
+            peak_sem = peaks.std() / np.sqrt(len(peaks))
+
+            # Calculate time to peak
+            peak_times = group_data.idxmax(axis=1).astype(float)
+            time_to_peak_mean = peak_times.mean()
+            time_to_peak_sem = peak_times.std() / np.sqrt(len(peak_times))
+
+            # Write group statistics
+            buffer.write(f"Group: {group_name}\n")
+            buffer.write(f"Number of wells: {len(well_ids)}\n")
+            buffer.write(f"Peak ΔF/F₀: {peak_mean:.2f} ± {peak_sem:.2f} \n")
+            buffer.write(f"Time to peak: {time_to_peak_mean:.2f} ± {time_to_peak_sem:.2f} s\n")
+
+            # Add ionomycin normalization if enabled
+            if self.normalize_to_ionomycin:
+                ionomycin_responses = self.get_ionomycin_responses()
+                if ionomycin_responses:
+                    normalized_peaks = []
+                    for well_id in well_ids:
+                        well_idx = next(idx for idx in range(96) if self.well_data[idx]["well_id"] == well_id)
+                        sample_id = self.well_data[well_idx].get("sample_id", "default")
+                        ionomycin_response = ionomycin_responses.get(sample_id)
+                        if ionomycin_response:
+                            peak = group_data.loc[well_id].max()
+                            normalized_peaks.append((peak / ionomycin_response) * 100)
+
+                    if normalized_peaks:
+                        norm_mean = np.mean(normalized_peaks)
+                        norm_sem = np.std(normalized_peaks) / np.sqrt(len(normalized_peaks))
+                        buffer.write(f"Normalized response: {norm_mean:.2f} ± {norm_sem:.2f} % of ionomycin\n")
+
+            buffer.write("\n")
+
+        # Update text display
+        self.results_text.setText(buffer.getvalue())
+
+    def export_results(self):
+        """Export results to Excel workbook"""
+        if self.dff_data is None:
+            QMessageBox.warning(self, "Warning", "No data to export")
+            return
+
+        # Get save file name
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export Results", "",
+            "Excel Files (*.xlsx);;All Files (*)",
+            options=options
+        )
+
+        if not file_path:
+            return
+
+        try:
+            wb = Workbook()
+
+            # Summary sheet
+            self.create_summary_sheet(wb)
+
+            # Individual traces sheet
+            self.create_traces_sheet(wb, "Individual_Traces", self.dff_data)
+
+            # Mean traces sheet
+            self.create_mean_traces_sheet(wb)
+
+            # Peak responses sheet
+            self.create_peak_responses_sheet(wb)
+
+            # Ionomycin normalized sheet (if applicable)
+            if self.normalize_to_ionomycin:
+                self.create_normalized_sheet(wb)
+
+            # Remove default sheet
+            if "Sheet" in wb.sheetnames:
+                wb.remove(wb["Sheet"])
+
+            # Save workbook
+            wb.save(file_path)
+            QMessageBox.information(self, "Success", "Results exported successfully")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to export results: {str(e)}")
+
+    def create_summary_sheet(self, wb):
+        """Create summary sheet with statistics and concentrations"""
+        ws = wb.create_sheet("Summary")
+
+        # Add headers
+        headers = ["Group", "Concentration (µM)", "Wells", "Peak ΔF/F₀ (mean)", "Peak ΔF/F₀ (SEM)",
+                  "Time to Peak (s)", "Time to Peak SEM"]
+        if self.normalize_to_ionomycin:
+            headers.extend(["Norm. Response (%)", "Norm. Response SEM"])
+
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = Font(bold=True)
+
+        # Add data
+        grouped_data = self.group_data_by_metadata()
+        row = 2
+
+        for group_name, well_ids in grouped_data.items():
+            group_data = self.dff_data.loc[well_ids]
+            peaks = group_data.max(axis=1)
+            peak_times = group_data.idxmax(axis=1).astype(float)
+
+            # Extract concentration if present in group name
+            concentration = ""
+            if "|" in group_name:
+                parts = group_name.split("|")
+                for part in parts:
+                    if "µM" in part:
+                        concentration = part.strip().replace(" µM", "")
+
+            ws.cell(row=row, column=1, value=group_name)
+            ws.cell(row=row, column=2, value=concentration)
+            ws.cell(row=row, column=3, value=len(well_ids))
+            ws.cell(row=row, column=4, value=peaks.mean())
+            ws.cell(row=row, column=5, value=peaks.std() / np.sqrt(len(peaks)))
+            ws.cell(row=row, column=6, value=peak_times.mean())
+            ws.cell(row=row, column=7, value=peak_times.std() / np.sqrt(len(peak_times)))
+
+            if self.normalize_to_ionomycin:
+                normalized_data = self.calculate_normalized_responses(group_name, well_ids)
+                if normalized_data:
+                    ws.cell(row=row, column=8, value=normalized_data['mean'])
+                    ws.cell(row=row, column=9, value=normalized_data['sem'])
+
+            row += 1
+
+    def create_traces_sheet(self, wb, sheet_name, data):
+        """Create sheet with trace data including concentrations"""
+        ws = wb.create_sheet(sheet_name)
+
+        # Add headers
+        ws.cell(row=1, column=1, value="Well ID")
+        ws.cell(row=1, column=2, value="Group")
+        ws.cell(row=1, column=3, value="Concentration (µM)")
+        for col, time in enumerate(self.processed_time_points, 4):
+            ws.cell(row=1, column=col, value=float(time))
+
+        # Add data
+        row = 2
+        grouped_data = self.group_data_by_metadata()
+        for group_name, well_ids in grouped_data.items():
+            for well_id in well_ids:
+                # Get concentration for this well
+                well_idx = next(idx for idx in range(96) if self.well_data[idx]["well_id"] == well_id)
+                concentration = self.well_data[well_idx].get("concentration", "").replace(" µM", "")
+
+                ws.cell(row=row, column=1, value=well_id)
+                ws.cell(row=row, column=2, value=group_name)
+                ws.cell(row=row, column=3, value=concentration)
+                for col, value in enumerate(data.loc[well_id], 4):
+                    ws.cell(row=row, column=col, value=float(value))
+                row += 1
+
+    def create_mean_traces_sheet(self, wb):
+        """Create sheet with mean traces including concentrations"""
+        ws = wb.create_sheet("Mean_Traces")
+
+        # Add headers
+        ws.cell(row=1, column=1, value="Group")
+        ws.cell(row=1, column=2, value="Concentration (µM)")
+        ws.cell(row=1, column=3, value="Time (s)")
+        ws.cell(row=1, column=4, value="Mean ΔF/F₀")
+        ws.cell(row=1, column=5, value="SEM")
+
+        # Add data
+        row = 2
+        grouped_data = self.group_data_by_metadata()
+
+        for group_name, well_ids in grouped_data.items():
+            # Extract concentration if present
+            concentration = ""
+            if "|" in group_name:
+                parts = group_name.split("|")
+                for part in parts:
+                    if "µM" in part:
+                        concentration = part.strip().replace(" µM", "")
+
+            group_data = self.dff_data.loc[well_ids]
+            mean_trace = group_data.mean()
+            sem_trace = group_data.sem()
+
+            for t, (mean, sem) in enumerate(zip(mean_trace, sem_trace)):
+                ws.cell(row=row, column=1, value=group_name)
+                ws.cell(row=row, column=2, value=concentration)
+                ws.cell(row=row, column=3, value=float(self.processed_time_points[t]))
+                ws.cell(row=row, column=4, value=float(mean))
+                ws.cell(row=row, column=5, value=float(sem))
+                row += 1
+
+            # Add blank row between groups
+            row += 1
+
+    def create_peak_responses_sheet(self, wb):
+        """Create sheet with peak responses including concentrations"""
+        ws = wb.create_sheet("Peak_Responses")
+
+        # Add headers
+        headers = ["Group", "Well ID", "Concentration (µM)", "Peak ΔF/F₀", "Time to Peak (s)"]
+        for col, header in enumerate(headers, 1):
+            ws.cell(row=1, column=col, value=header)
+
+        # Add data
+        row = 2
+        grouped_data = self.group_data_by_metadata()
+
+        for group_name, well_ids in grouped_data.items():
+            for well_id in well_ids:
+                # Get concentration for this well
+                well_idx = next(idx for idx in range(96) if self.well_data[idx]["well_id"] == well_id)
+                concentration = self.well_data[well_idx].get("concentration", "").replace(" µM", "")
+
+                trace = self.dff_data.loc[well_id]
+                peak = trace.max()
+                peak_time = float(trace.idxmax())
+
+                ws.cell(row=row, column=1, value=group_name)
+                ws.cell(row=row, column=2, value=well_id)
+                ws.cell(row=row, column=3, value=concentration)
+                ws.cell(row=row, column=4, value=float(peak))
+                ws.cell(row=row, column=5, value=peak_time)
+                row += 1
+
+    def create_normalized_sheet(self, wb):
+        """Create sheet with ionomycin-normalized data including concentrations"""
+        if not self.normalize_to_ionomycin:
+            return
+
+        ws = wb.create_sheet("Ionomycin_Normalized")
+
+        # Add headers
+        headers = ["Group", "Well ID", "Concentration (µM)", "Normalized Response (%)",
+                  "Sample ID", "Ionomycin Response"]
+        for col, header in enumerate(headers, 1):
+            ws.cell(row=1, column=col, value=header)
+
+        # Add data
+        row = 2
+        grouped_data = self.group_data_by_metadata()
+        ionomycin_responses = self.get_ionomycin_responses()
+
+        for group_name, well_ids in grouped_data.items():
+            if group_name == "Ionomycin":
+                continue
+
+            for well_id in well_ids:
+                well_idx = next(idx for idx in range(96) if self.well_data[idx]["well_id"] == well_id)
+                concentration = self.well_data[well_idx].get("concentration", "").replace(" µM", "")
+                sample_id = self.well_data[well_idx].get("sample_id", "default")
+                ionomycin_response = ionomycin_responses.get(sample_id)
+
+                if ionomycin_response:
+                    peak = self.dff_data.loc[well_id].max()
+                    normalized = (peak / ionomycin_response) * 100
+
+                    ws.cell(row=row, column=1, value=group_name)
+                    ws.cell(row=row, column=2, value=well_id)
+                    ws.cell(row=row, column=3, value=concentration)
+                    ws.cell(row=row, column=4, value=float(normalized))
+                    ws.cell(row=row, column=5, value=sample_id)
+                    ws.cell(row=row, column=6, value=float(ionomycin_response))
+                    row += 1
+
+    def setup_plot_controls(self, layout):
+        """Set up plot control buttons"""
+        plot_buttons = QHBoxLayout()
+
+        self.raw_plot_button = QPushButton("Raw Traces")
+        self.dff_plot_button = QPushButton("ΔF/F₀ Traces")
+        self.summary_plot_button = QPushButton("Summary Plots")
+
+        self.raw_plot_button.setCheckable(True)
+        self.dff_plot_button.setCheckable(True)
+        self.summary_plot_button.setCheckable(True)
+
+        self.raw_plot_button.clicked.connect(lambda: self.toggle_plot_window('raw'))
+        self.dff_plot_button.clicked.connect(lambda: self.toggle_plot_window('dff'))
+        self.summary_plot_button.clicked.connect(lambda: self.toggle_plot_window('summary'))
+
+        plot_buttons.addWidget(self.raw_plot_button)
+        plot_buttons.addWidget(self.dff_plot_button)
+        plot_buttons.addWidget(self.summary_plot_button)
+
+        layout.addLayout(plot_buttons)
 
     def create_menus(self):
         """Create menu bar and menus"""
@@ -687,24 +1104,21 @@ class WellPlateLabeler(QMainWindow):
         grouped_data = self.group_data_by_metadata()
         logger.info(f"Processing {len(grouped_data)} groups for plotting")
 
-        # Define colors for groups
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
-
-
         # Add legend to individual traces plot
-        self.summary_plot_window.individual_plot.addLegend(offset=(10, 10))  # Offset from top-left
+        self.summary_plot_window.individual_plot.addLegend(offset=(10, 10))
 
         # Add legend to mean traces plot
         self.summary_plot_window.mean_plot.addLegend(offset=(10, 10))
 
-
         # Plot traces for each group
+        non_ionomycin_count = 0  # Counter for normalized plot positioning
         for i, (group_name, well_ids) in enumerate(grouped_data.items()):
             logger.info(f"Plotting group '{group_name}' with {len(well_ids)} wells")
 
             try:
                 # Get color for this group
-                base_color = colors[i % len(colors)]
+                well_idx = next(idx for idx in range(96) if self.well_data[idx]["well_id"] == well_ids[0])
+                base_color = self.well_data[well_idx]["color"]
                 main_color = QColor(base_color)
                 transparent_color = QColor(base_color)
                 transparent_color.setAlpha(50)
@@ -723,14 +1137,12 @@ class WellPlateLabeler(QMainWindow):
                             pen=light_pen,
                             name=group_name if well_id == well_ids[0] else None  # Legend only for first trace
                         )
-                    else:
-                        logger.error(f"Data length mismatch for well {well_id}: times={len(times)}, data={len(trace_data)}")
 
                 # Calculate and plot mean trace
                 mean_trace = np.array(group_data.mean())
                 sem_trace = np.array(group_data.sem())
 
-                if len(times) == len(mean_trace):  # Verify lengths match
+                if len(times) == len(mean_trace):
                     # Plot mean trace
                     self.summary_plot_window.mean_plot.plot(
                         times,
@@ -742,16 +1154,12 @@ class WellPlateLabeler(QMainWindow):
                     # Add error bands
                     band_top = mean_trace + sem_trace
                     band_bottom = mean_trace - sem_trace
-
                     fill = pg.FillBetweenItem(
                         pg.PlotDataItem(times, band_top),
                         pg.PlotDataItem(times, band_bottom),
                         brush=transparent_color
                     )
                     self.summary_plot_window.mean_plot.addItem(fill)
-                else:
-                    logger.error(f"Data length mismatch for mean trace: times={len(times)}, data={len(mean_trace)}")
-
 
                 # Calculate peak responses
                 peaks = np.array(group_data.max(axis=1))
@@ -775,19 +1183,63 @@ class WellPlateLabeler(QMainWindow):
                     beam=0.2,
                     pen=pg.mkPen(main_color, width=2)
                 )
-
                 self.summary_plot_window.responses_plot.addItem(error)
 
                 # Add value label above bar
                 text = pg.TextItem(
-                       text=f'{peak_mean:.1f}±{peak_sem:.1f}',
-                       color=main_color,
-                       anchor=(0.5, 1)
+                    text=f'{peak_mean:.1f}±{peak_sem:.1f}',
+                    color=main_color,
+                    anchor=(0.5, 1)
                 )
-                text.setPos(i, peak_mean + peak_sem * 2)  # Position above error bar
+                text.setPos(i, peak_mean + peak_sem * 2)
                 self.summary_plot_window.responses_plot.addItem(text)
 
+                # Add normalized responses if enabled (only for non-ionomycin groups)
+                if self.normalize_to_ionomycin and "ionomycin" not in group_name.lower():
+                    ionomycin_responses = self.get_ionomycin_responses()
+                    if ionomycin_responses:
+                        normalized_peaks = []
+                        for well_id in well_ids:
+                            well_idx = next(idx for idx in range(96) if self.well_data[idx]["well_id"] == well_id)
+                            sample_id = self.well_data[well_idx].get("sample_id", "default")
+                            ionomycin_response = ionomycin_responses.get(sample_id)
+                            if ionomycin_response:
+                                peak = group_data.loc[well_id].max()
+                                normalized_peaks.append((peak / ionomycin_response) * 100)
 
+                        if normalized_peaks:
+                            norm_mean = np.mean(normalized_peaks)
+                            norm_sem = np.std(normalized_peaks) / np.sqrt(len(normalized_peaks))
+
+                            # Add normalized bar with matching color
+                            norm_bar = pg.BarGraphItem(
+                                x=[non_ionomycin_count],
+                                height=[norm_mean],
+                                width=0.8,
+                                brush=main_color
+                            )
+                            self.summary_plot_window.normalized_plot.addItem(norm_bar)
+
+                            # Add normalized error bars
+                            norm_error = pg.ErrorBarItem(
+                                x=np.array([non_ionomycin_count]),
+                                y=np.array([norm_mean]),
+                                height=np.array([norm_sem * 2]),
+                                beam=0.2,
+                                pen=pg.mkPen(main_color, width=2)
+                            )
+                            self.summary_plot_window.normalized_plot.addItem(norm_error)
+
+                            # Add normalized value label
+                            norm_text = pg.TextItem(
+                                text=f'{norm_mean:.1f}±{norm_sem:.1f}',
+                                color=main_color,
+                                anchor=(0.5, 1)
+                            )
+                            norm_text.setPos(non_ionomycin_count, norm_mean + norm_sem * 2)
+                            self.summary_plot_window.normalized_plot.addItem(norm_text)
+
+                            non_ionomycin_count += 1  # Increment counter for next non-ionomycin group
 
                 logger.info(f"Successfully plotted group {group_name}")
 
@@ -807,7 +1259,7 @@ class WellPlateLabeler(QMainWindow):
         self.summary_plot_window.responses_plot.setLabel('left', 'Peak ΔF/F₀ (%)')
         self.summary_plot_window.responses_plot.setLabel('bottom', 'Groups')
 
-        # Add group labels to response plot
+        # Add group labels to response plot (all groups)
         group_names = list(grouped_data.keys())
         axis = self.summary_plot_window.responses_plot.getAxis('bottom')
         ticks = [(i, name) for i, name in enumerate(group_names)]
@@ -817,83 +1269,22 @@ class WellPlateLabeler(QMainWindow):
         n_groups = len(grouped_data)
         self.summary_plot_window.responses_plot.setXRange(-0.5, n_groups - 0.5)
 
-        # Add normalized responses if enabled
+        # Update normalized plot labels and axes
         if self.normalize_to_ionomycin:
-            try:
-                # Get ionomycin responses
-                ionomycin_responses = self.get_ionomycin_responses()
+            self.summary_plot_window.normalized_plot.setLabel('left', 'Response (% Ionomycin)')
+            self.summary_plot_window.normalized_plot.setLabel('bottom', 'Groups')
 
-                if not ionomycin_responses:
-                    logger.warning("No Ionomycin data found for normalization")
-                    return
+            # Create ticks only for non-ionomycin groups
+            non_ionomycin_groups = [name for name in grouped_data.keys()
+                                  if "ionomycin" not in name.lower()]
+            norm_ticks = [(i, name) for i, name in enumerate(non_ionomycin_groups)]
 
-                # Clear normalized plot
-                self.summary_plot_window.normalized_plot.clear()
+            axis = self.summary_plot_window.normalized_plot.getAxis('bottom')
+            axis.setTicks([norm_ticks])
+            self.summary_plot_window.normalized_plot.setXRange(-0.5, len(non_ionomycin_groups) - 0.5)
 
-                # Plot normalized responses for each group
-                for i, (group_name, well_ids) in enumerate(grouped_data.items()):
-                    if group_name == "Ionomycin":  # Skip ionomycin group
-                        continue
-
-                    # Get group data
-                    group_data = self.dff_data.loc[well_ids]
-                    normalized_peaks = []
-
-                    # Calculate normalized responses
-                    for well_id in well_ids:
-                        # Get sample ID for this well
-                        well_idx = next(idx for idx in range(96) if self.well_data[idx]["well_id"] == well_id)
-                        sample_id = self.well_data[well_idx].get("sample_id", "default")
-
-                        # Get corresponding ionomycin response
-                        ionomycin_response = ionomycin_responses.get(sample_id)
-                        if ionomycin_response:
-                            peak = group_data.loc[well_id].max()
-                            normalized_peaks.append((peak / ionomycin_response) * 100)
-
-                    if normalized_peaks:
-                        normalized_peaks = np.array(normalized_peaks)
-                        peak_mean = np.mean(normalized_peaks)
-                        peak_sem = np.std(normalized_peaks) / np.sqrt(len(normalized_peaks))
-
-                        # Add bar for normalized response
-                        bar = pg.BarGraphItem(
-                            x=[i],
-                            height=[peak_mean],
-                            width=0.8,
-                            brush=main_color
-                        )
-                        self.summary_plot_window.normalized_plot.addItem(bar)
-
-                        # Add error bars
-                        error = pg.ErrorBarItem(
-                            x=np.array([i]),
-                            y=np.array([peak_mean]),
-                            height=np.array([peak_sem * 2]),
-                            beam=0.2,
-                            pen=pg.mkPen(main_color, width=2)
-                        )
-                        self.summary_plot_window.normalized_plot.addItem(error)
-
-                # Update normalized plot labels and axes
-                self.summary_plot_window.normalized_plot.setLabel('left', 'Response (% Ionomycin)')
-                self.summary_plot_window.normalized_plot.setLabel('bottom', 'Groups')
-
-                # Add group labels
-                non_ionomycin_groups = [name for name in group_names if name != "Ionomycin"]
-                axis = self.summary_plot_window.normalized_plot.getAxis('bottom')
-                ticks = [(i, name) for i, name in enumerate(non_ionomycin_groups)]
-                axis.setTicks([ticks])
-
-                # Set axis ranges
-                n_groups = len(non_ionomycin_groups)
-                self.summary_plot_window.normalized_plot.setXRange(-0.5, n_groups - 0.5)
-
-            except Exception as e:
-                logger.error(f"Error calculating normalized responses: {str(e)}")
-                import traceback
-                logger.error(traceback.format_exc())
-
+        # Update results text
+        self.update_results_text()
 
         logger.info("Summary plot update completed")
 
@@ -1046,10 +1437,6 @@ class WellPlateLabeler(QMainWindow):
             elif not all_selected and idx not in self.selected_wells:
                 self.toggle_well_selection(idx)
 
-    def select_color(self):
-        color = QColorDialog.getColor()
-        if color.isValid():
-            self.current_color = color
 
     def apply_label(self):
         """Apply label, concentration, and color to selected wells"""
