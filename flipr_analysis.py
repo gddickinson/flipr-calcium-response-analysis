@@ -1252,11 +1252,11 @@ class WellPlateLabeler(QMainWindow):
         # Update all plot labels and settings
         for plot in [self.summary_plot_window.individual_plot,
                     self.summary_plot_window.mean_plot]:
-            plot.setLabel('left', 'ΔF/F₀ (%)')
+            plot.setLabel('left', 'ΔF/F₀')
             plot.setLabel('bottom', 'Time (s)')
 
         # Update peak responses plot
-        self.summary_plot_window.responses_plot.setLabel('left', 'Peak ΔF/F₀ (%)')
+        self.summary_plot_window.responses_plot.setLabel('left', 'Peak ΔF/F₀')
         self.summary_plot_window.responses_plot.setLabel('bottom', 'Groups')
 
         # Add group labels to response plot (all groups)
