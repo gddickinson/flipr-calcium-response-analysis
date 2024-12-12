@@ -327,6 +327,13 @@ class WellPlateLabeler(QMainWindow):
         self.selected_wells = set()
         self.current_color = QColor(self.default_colors[0])
 
+        self.selection_state = {
+            'rows': set(),  # Track selected rows
+            'cols': set(),  # Track selected columns
+            'wells': set(),  # Track individually selected wells
+            'all_selected': False  # Track if all wells are selected
+        }
+
     def create_compact_input_fields(self):
         """Create more compact input fields layout"""
         input_group = QGroupBox("Well Properties")
@@ -373,6 +380,28 @@ class WellPlateLabeler(QMainWindow):
         input_group.setLayout(input_layout)
         return input_group
 
+    def update_selection_state(self):
+        """Update the selection state based on current selections"""
+        if self.selection_state['all_selected']:
+            self.selected_wells = set(range(96))
+        else:
+            # Combine row, column and individual well selections
+            selected = set()
+
+            # Add wells from selected rows
+            for row in self.selection_state['rows']:
+                selected.update(range(row * 12, (row + 1) * 12))
+
+            # Add wells from selected columns
+            for col in self.selection_state['cols']:
+                selected.update(range(col, 96, 12))
+
+            # Add individually selected wells
+            selected.update(self.selection_state['wells'])
+
+            self.selected_wells = selected
+
+
     def create_compact_action_buttons(self):
         """Create action buttons in a more compact layout"""
         action_layout = QGridLayout()
@@ -397,59 +426,62 @@ class WellPlateLabeler(QMainWindow):
         return action_layout
 
     def create_compact_well_plate_grid(self):
-        """Create a more compact well plate grid"""
         plate_widget = QWidget()
         plate_layout = QGridLayout()
-        plate_layout.setSpacing(1)  # Minimal spacing between wells
+        plate_layout.setSpacing(1)
 
         rows = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
         cols = range(1, 13)
         self.wells = []
 
-        # Top-left corner for selecting all wells
-        top_left_label = QLabel("✓")
-        top_left_label.setStyleSheet("background-color: lightgray;")
-        top_left_label.setAlignment(Qt.AlignCenter)
-        top_left_label.setCursor(Qt.PointingHandCursor)
-        # Create a custom class to handle the mouse press event
-        class ClickableLabel(QLabel):
-            def __init__(self, parent, callback):
-                super().__init__(parent)
-                self.callback = callback
-            def mousePressEvent(self, event):
-                self.callback()
-
-        # Use the custom label class with direct method reference
-        toggle_all_label = ClickableLabel(None, self.toggle_all_selection)
-        toggle_all_label.setText("✓")
-        toggle_all_label.setStyleSheet("background-color: lightgray;")
-        toggle_all_label.setAlignment(Qt.AlignCenter)
-        toggle_all_label.setCursor(Qt.PointingHandCursor)
-        plate_layout.addWidget(toggle_all_label, 0, 0)
+        # Create the select-all button
+        select_all_btn = QPushButton("✓")
+        select_all_btn.setStyleSheet("""
+            QPushButton {
+                background-color: lightgray;
+                padding: 2px;
+                max-width: 40px;
+                max-height: 40px;
+            }
+        """)
+        select_all_btn.clicked.connect(self.toggle_all_selection)
+        plate_layout.addWidget(select_all_btn, 0, 0)
 
         # Column headers
         for j, col in enumerate(cols):
-            # Create column header with direct method reference
-            col_label = ClickableLabel(None, lambda col=j: self.toggle_column_selection(col))
-            col_label.setText(str(col))
-            col_label.setAlignment(Qt.AlignCenter)
-            col_label.setCursor(Qt.PointingHandCursor)
-            plate_layout.addWidget(col_label, 0, j + 1)
+            col_btn = QPushButton(str(col))
+            col_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: lightgray;
+                    padding: 2px;
+                    max-width: 40px;
+                    max-height: 40px;
+                }
+            """)
+            col_btn.clicked.connect(lambda checked, col=j: self.toggle_column_selection(col))
+            plate_layout.addWidget(col_btn, 0, j + 1)
 
         # Row headers and wells
         for i, row in enumerate(rows):
-            # Create row header with direct method reference
-            row_label = ClickableLabel(None, lambda row=i: self.toggle_row_selection(row))
-            row_label.setText(row)
-            row_label.setAlignment(Qt.AlignCenter)
-            row_label.setCursor(Qt.PointingHandCursor)
-            plate_layout.addWidget(row_label, i + 1, 0)
+            # Row header
+            row_btn = QPushButton(row)
+            row_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: lightgray;
+                    padding: 2px;
+                    max-width: 40px;
+                    max-height: 40px;
+                }
+            """)
+            row_btn.clicked.connect(lambda checked, row=i: self.toggle_row_selection(row))
+            plate_layout.addWidget(row_btn, i + 1, 0)
 
+            # Wells
             for j, col in enumerate(cols):
                 well_index = i * 12 + j
                 well_id = f"{row}{col}"
                 button = QPushButton()
-                button.setMinimumSize(40, 40)  # Smaller fixed size for wells
+                button.setMinimumSize(40, 40)
                 button.setMaximumSize(80, 80)
                 button.setStyleSheet("""
                     QPushButton {
@@ -461,11 +493,28 @@ class WellPlateLabeler(QMainWindow):
                 button.clicked.connect(lambda checked, idx=well_index: self.toggle_well_selection(idx))
                 self.wells.append(button)
                 self.well_data[well_index]["well_id"] = well_id
-                self.update_well_button_text(well_index)  # Initialize button text
+                self.update_well_button_text(well_index)
                 plate_layout.addWidget(button, i + 1, j + 1)
 
         plate_widget.setLayout(plate_layout)
         return plate_widget
+
+    def update_well_appearances(self):
+        """Update the visual appearance of all wells based on selection state"""
+        for idx in range(96):
+            well_data = self.well_data[idx]
+            is_selected = idx in self.selected_wells
+
+            color = 'lightblue' if is_selected else well_data['color']
+
+            self.wells[idx].setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {color};
+                    padding: 2px;
+                    font-size: 12pt;
+                    color: black;
+                }}
+            """)
 
     def update_well_button_text(self, index):
         """Update well button text in a compact format"""
@@ -1410,91 +1459,263 @@ class WellPlateLabeler(QMainWindow):
                 logger.error(f"Error plotting well {well_id}: {str(e)}")
 
     def toggle_well_selection(self, index):
-        """Toggle well selection and update plots immediately"""
-        if index in self.selected_wells:
-            self.selected_wells.remove(index)
-            self.wells[index].setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {self.well_data[index]['color']};
-                    padding: 2px;
-                    font-size: 12pt;
-                    color: black;
-                }}
-            """)
+        """Toggle individual well selection and update plots"""
+        well_id = self.well_data[index]["well_id"]
+        was_selected = index in self.selection_state['wells']
 
-            # Remove trace from all visible plot windows
-            well_id = self.well_data[index]["well_id"]
-            if self.raw_plot_window.isVisible() and well_id in self.raw_plot_window.plot_items:
-                self.raw_plot_window.plot_widget.removeItem(self.raw_plot_window.plot_items[well_id])
-                del self.raw_plot_window.plot_items[well_id]
-
-            if self.dff_plot_window.isVisible() and well_id in self.dff_plot_window.plot_items:
-                self.dff_plot_window.plot_widget.removeItem(self.dff_plot_window.plot_items[well_id])
-                del self.dff_plot_window.plot_items[well_id]
+        if was_selected:
+            self.selection_state['wells'].remove(index)
         else:
-            self.selected_wells.add(index)
-            self.wells[index].setStyleSheet("""
-                QPushButton {
-                    background-color: lightblue;
-                    padding: 2px;
-                    font-size: 12pt;
-                    color: black;
-                }
-            """)
+            self.selection_state['wells'].add(index)
 
-            # Add trace to all visible plot windows
-            if self.raw_data is not None:
-                well_id = self.well_data[index]["well_id"]
-                times = pd.to_numeric(self.raw_data.columns, errors='coerce')
+        self.update_selection_state()
+        self.update_well_appearances()
 
-                # Update raw plot
-                if self.raw_plot_window.isVisible() and well_id in self.raw_data.index:
-                    values = self.raw_data.loc[well_id]
+        # Handle plot updates for this specific well
+        if self.raw_data is not None:
+            # Update raw plot if window exists
+            if hasattr(self, 'raw_plot_window'):
+                if was_selected and well_id in self.raw_plot_window.plot_items:
+                    # Remove trace
+                    self.raw_plot_window.plot_widget.removeItem(self.raw_plot_window.plot_items[well_id])
+                    del self.raw_plot_window.plot_items[well_id]
+                elif not was_selected and well_id in self.raw_data.index:
+                    # Add trace
+                    if self.remove_artifact:
+                        times = self.processed_time_points
+                        n_cols = self.raw_data.shape[1]
+                        start_idx = int(n_cols * self.analysis_params['artifact_start']/220)
+                        end_idx = int(n_cols * self.analysis_params['artifact_end']/220)
+                        values = pd.concat([
+                            self.raw_data.loc[well_id][:start_idx],
+                            self.raw_data.loc[well_id][end_idx:]
+                        ])
+                    else:
+                        times = pd.to_numeric(self.raw_data.columns, errors='coerce')
+                        values = self.raw_data.loc[well_id]
+
                     self.raw_plot_window.plot_trace(well_id, times, values, self.well_data[index]["color"])
 
-                # Update ΔF/F₀ plot
-                if self.dff_plot_window.isVisible():
-                    if self.dff_data is None:
-                        self.process_data()
-                    if well_id in self.dff_data.index:
-                        values = self.dff_data.loc[well_id]
-                        self.dff_plot_window.plot_trace(well_id, times, values, self.well_data[index]["color"])
+            # Update ΔF/F₀ plot if window exists
+            if hasattr(self, 'dff_plot_window'):
+                if self.dff_data is None:
+                    self.process_data()
 
-        # Update summary plots if visible
-        if self.summary_plot_window.isVisible():
-            self.update_summary_plots()
+                if was_selected and well_id in self.dff_plot_window.plot_items:
+                    # Remove trace
+                    self.dff_plot_window.plot_widget.removeItem(self.dff_plot_window.plot_items[well_id])
+                    del self.dff_plot_window.plot_items[well_id]
+                elif not was_selected and well_id in self.dff_data.index:
+                    # Add trace
+                    if self.remove_artifact:
+                        times = self.processed_time_points
+                    else:
+                        times = pd.to_numeric(self.raw_data.columns, errors='coerce')
+                    values = self.dff_data.loc[well_id]
+                    self.dff_plot_window.plot_trace(well_id, times, values, self.well_data[index]["color"])
+
+            # Update summary plots if window exists
+            if hasattr(self, 'summary_plot_window'):
+                self.update_summary_plots()
 
     def toggle_row_selection(self, row_index):
-        """Toggle selection of all wells in a row"""
-        start_idx = row_index * 12
-        end_idx = start_idx + 12
-        row_selected = all(idx in self.selected_wells for idx in range(start_idx, end_idx))
+        """Toggle row selection and update plots"""
+        # Store previous selection state for comparison
+        previously_selected = set(self.selected_wells)
 
-        for idx in range(start_idx, end_idx):
-            if row_selected and idx in self.selected_wells:
-                self.toggle_well_selection(idx)
-            elif not row_selected and idx not in self.selected_wells:
-                self.toggle_well_selection(idx)
+        if row_index in self.selection_state['rows']:
+            self.selection_state['rows'].remove(row_index)
+        else:
+            self.selection_state['rows'].add(row_index)
+
+        self.update_selection_state()
+        self.update_well_appearances()
+
+        # Update plots based on changes
+        if self.raw_data is not None:
+            newly_selected = self.selected_wells - previously_selected
+            newly_unselected = previously_selected - self.selected_wells
+
+            # Handle removed wells
+            for idx in newly_unselected:
+                well_id = self.well_data[idx]["well_id"]
+                if hasattr(self, 'raw_plot_window'):
+                    if well_id in self.raw_plot_window.plot_items:
+                        self.raw_plot_window.plot_widget.removeItem(self.raw_plot_window.plot_items[well_id])
+                        del self.raw_plot_window.plot_items[well_id]
+
+                if hasattr(self, 'dff_plot_window'):
+                    if well_id in self.dff_plot_window.plot_items:
+                        self.dff_plot_window.plot_widget.removeItem(self.dff_plot_window.plot_items[well_id])
+                        del self.dff_plot_window.plot_items[well_id]
+
+            # Handle added wells
+            for idx in newly_selected:
+                well_id = self.well_data[idx]["well_id"]
+                if well_id in self.raw_data.index:
+                    if hasattr(self, 'raw_plot_window'):
+                        if self.remove_artifact:
+                            times = self.processed_time_points
+                            n_cols = self.raw_data.shape[1]
+                            start_idx = int(n_cols * self.analysis_params['artifact_start']/220)
+                            end_idx = int(n_cols * self.analysis_params['artifact_end']/220)
+                            values = pd.concat([
+                                self.raw_data.loc[well_id][:start_idx],
+                                self.raw_data.loc[well_id][end_idx:]
+                            ])
+                        else:
+                            times = pd.to_numeric(self.raw_data.columns, errors='coerce')
+                            values = self.raw_data.loc[well_id]
+                        self.raw_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
+
+                    if hasattr(self, 'dff_plot_window'):
+                        if self.dff_data is None:
+                            self.process_data()
+                        if well_id in self.dff_data.index:
+                            if self.remove_artifact:
+                                times = self.processed_time_points
+                            else:
+                                times = pd.to_numeric(self.raw_data.columns, errors='coerce')
+                            values = self.dff_data.loc[well_id]
+                            self.dff_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
+
+            # Update summary plots if they exist
+            if hasattr(self, 'summary_plot_window'):
+                self.update_summary_plots()
 
     def toggle_column_selection(self, col_index):
-        """Toggle selection of all wells in a column"""
-        col_selected = all(idx in self.selected_wells for idx in range(col_index, 96, 12))
+        """Toggle column selection and update plots"""
+        # Store previous selection state for comparison
+        previously_selected = set(self.selected_wells)
 
-        for idx in range(col_index, 96, 12):
-            if col_selected and idx in self.selected_wells:
-                self.toggle_well_selection(idx)
-            elif not col_selected and idx not in self.selected_wells:
-                self.toggle_well_selection(idx)
+        if col_index in self.selection_state['cols']:
+            self.selection_state['cols'].remove(col_index)
+        else:
+            self.selection_state['cols'].add(col_index)
+
+        self.update_selection_state()
+        self.update_well_appearances()
+
+        # Reuse the same plot update logic
+        if self.raw_data is not None:
+            newly_selected = self.selected_wells - previously_selected
+            newly_unselected = previously_selected - self.selected_wells
+
+            # Handle removed wells
+            for idx in newly_unselected:
+                well_id = self.well_data[idx]["well_id"]
+                if hasattr(self, 'raw_plot_window'):
+                    if well_id in self.raw_plot_window.plot_items:
+                        self.raw_plot_window.plot_widget.removeItem(self.raw_plot_window.plot_items[well_id])
+                        del self.raw_plot_window.plot_items[well_id]
+
+                if hasattr(self, 'dff_plot_window'):
+                    if well_id in self.dff_plot_window.plot_items:
+                        self.dff_plot_window.plot_widget.removeItem(self.dff_plot_window.plot_items[well_id])
+                        del self.dff_plot_window.plot_items[well_id]
+
+            # Handle added wells
+            for idx in newly_selected:
+                well_id = self.well_data[idx]["well_id"]
+                if well_id in self.raw_data.index:
+                    if hasattr(self, 'raw_plot_window'):
+                        if self.remove_artifact:
+                            times = self.processed_time_points
+                            n_cols = self.raw_data.shape[1]
+                            start_idx = int(n_cols * self.analysis_params['artifact_start']/220)
+                            end_idx = int(n_cols * self.analysis_params['artifact_end']/220)
+                            values = pd.concat([
+                                self.raw_data.loc[well_id][:start_idx],
+                                self.raw_data.loc[well_id][end_idx:]
+                            ])
+                        else:
+                            times = pd.to_numeric(self.raw_data.columns, errors='coerce')
+                            values = self.raw_data.loc[well_id]
+                        self.raw_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
+
+                    if hasattr(self, 'dff_plot_window'):
+                        if self.dff_data is None:
+                            self.process_data()
+                        if well_id in self.dff_data.index:
+                            if self.remove_artifact:
+                                times = self.processed_time_points
+                            else:
+                                times = pd.to_numeric(self.raw_data.columns, errors='coerce')
+                            values = self.dff_data.loc[well_id]
+                            self.dff_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
+
+            # Update summary plots if they exist
+            if hasattr(self, 'summary_plot_window'):
+                self.update_summary_plots()
 
     def toggle_all_selection(self):
-        """Toggle selection of all wells"""
-        all_selected = len(self.selected_wells) == 96
+        """Toggle selection of all wells and update plots"""
+        # Store previous selection state for comparison
+        previously_selected = set(self.selected_wells)
 
-        for idx in range(96):
-            if all_selected and idx in self.selected_wells:
-                self.toggle_well_selection(idx)
-            elif not all_selected and idx not in self.selected_wells:
-                self.toggle_well_selection(idx)
+        self.selection_state['all_selected'] = not self.selection_state['all_selected']
+        if self.selection_state['all_selected']:
+            self.selection_state['rows'] = set()
+            self.selection_state['cols'] = set()
+            self.selection_state['wells'] = set()
+
+        self.update_selection_state()
+        self.update_well_appearances()
+
+        # Update plots with the same logic as row/column selection
+        if self.raw_data is not None:
+            newly_selected = self.selected_wells - previously_selected
+            newly_unselected = previously_selected - self.selected_wells
+
+            # Handle removed wells
+            for idx in newly_unselected:
+                well_id = self.well_data[idx]["well_id"]
+                if hasattr(self, 'raw_plot_window'):
+                    if well_id in self.raw_plot_window.plot_items:
+                        self.raw_plot_window.plot_widget.removeItem(self.raw_plot_window.plot_items[well_id])
+                        del self.raw_plot_window.plot_items[well_id]
+
+                if hasattr(self, 'dff_plot_window'):
+                    if well_id in self.dff_plot_window.plot_items:
+                        self.dff_plot_window.plot_widget.removeItem(self.dff_plot_window.plot_items[well_id])
+                        del self.dff_plot_window.plot_items[well_id]
+
+            # Handle added wells
+            for idx in newly_selected:
+                well_id = self.well_data[idx]["well_id"]
+                if well_id in self.raw_data.index:
+                    if hasattr(self, 'raw_plot_window'):
+                        if self.remove_artifact:
+                            times = self.processed_time_points
+                            n_cols = self.raw_data.shape[1]
+                            start_idx = int(n_cols * self.analysis_params['artifact_start']/220)
+                            end_idx = int(n_cols * self.analysis_params['artifact_end']/220)
+                            values = pd.concat([
+                                self.raw_data.loc[well_id][:start_idx],
+                                self.raw_data.loc[well_id][end_idx:]
+                            ])
+                        else:
+                            times = pd.to_numeric(self.raw_data.columns, errors='coerce')
+                            values = self.raw_data.loc[well_id]
+                        self.raw_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
+
+                    if hasattr(self, 'dff_plot_window'):
+                        if self.dff_data is None:
+                            self.process_data()
+                        if well_id in self.dff_data.index:
+                            if self.remove_artifact:
+                                times = self.processed_time_points
+                            else:
+                                times = pd.to_numeric(self.raw_data.columns, errors='coerce')
+                            values = self.dff_data.loc[well_id]
+                            self.dff_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
+
+            # Update summary plots if they exist
+            if hasattr(self, 'summary_plot_window'):
+                self.update_summary_plots()
+
+            self.update_selection_state()
+            self.update_well_appearances()
 
 
     def apply_label(self):
@@ -1692,6 +1913,12 @@ class WellPlateLabeler(QMainWindow):
         """Update all plot windows"""
         if self.raw_data is None:
             return
+
+        # Clear existing plots
+        if self.raw_plot_window.isVisible():
+            self.raw_plot_window.clear_plot()
+        if self.dff_plot_window.isVisible():
+            self.dff_plot_window.clear_plot()
 
         # Get appropriate time values
         if self.remove_artifact:
