@@ -1458,69 +1458,97 @@ class WellPlateLabeler(QMainWindow):
             except Exception as e:
                 logger.error(f"Error plotting well {well_id}: {str(e)}")
 
+    def update_traces_for_selection_change(self, previously_selected):
+        """Helper function to update plot traces when selection changes"""
+        if self.raw_data is None:
+            return
+
+        newly_selected = self.selected_wells - previously_selected
+        newly_unselected = previously_selected - self.selected_wells
+
+        # Remove traces for unselected wells
+        self.remove_traces(newly_unselected)
+
+        # Add traces for newly selected wells
+        self.add_traces(newly_selected)
+
+        # Update summary plots if they exist
+        if hasattr(self, 'summary_plot_window'):
+            self.update_summary_plots()
+
+    def remove_traces(self, indices):
+        """Remove traces for given well indices"""
+        for idx in indices:
+            well_id = self.well_data[idx]["well_id"]
+
+            # Remove from raw plot
+            if hasattr(self, 'raw_plot_window'):
+                if well_id in self.raw_plot_window.plot_items:
+                    self.raw_plot_window.plot_widget.removeItem(self.raw_plot_window.plot_items[well_id])
+                    del self.raw_plot_window.plot_items[well_id]
+
+            # Remove from ΔF/F₀ plot
+            if hasattr(self, 'dff_plot_window'):
+                if well_id in self.dff_plot_window.plot_items:
+                    self.dff_plot_window.plot_widget.removeItem(self.dff_plot_window.plot_items[well_id])
+                    del self.dff_plot_window.plot_items[well_id]
+
+    def add_traces(self, indices):
+        """Add traces for given well indices"""
+        for idx in indices:
+            well_id = self.well_data[idx]["well_id"]
+            if well_id not in self.raw_data.index:
+                continue
+
+            times = self.get_time_points()
+
+            # Add to raw plot
+            if hasattr(self, 'raw_plot_window'):
+                values = self.get_raw_values(well_id)
+                self.raw_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
+
+            # Add to ΔF/F₀ plot
+            if hasattr(self, 'dff_plot_window'):
+                if self.dff_data is None:
+                    self.process_data()
+                if well_id in self.dff_data.index:
+                    values = self.dff_data.loc[well_id]
+                    self.dff_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
+
+    def get_time_points(self):
+        """Get appropriate time points based on artifact removal setting"""
+        if self.remove_artifact:
+            return self.processed_time_points
+        return pd.to_numeric(self.raw_data.columns, errors='coerce')
+
+    def get_raw_values(self, well_id):
+        """Get raw values for a well, handling artifact removal if enabled"""
+        if self.remove_artifact:
+            n_cols = self.raw_data.shape[1]
+            start_idx = int(n_cols * self.analysis_params['artifact_start']/220)
+            end_idx = int(n_cols * self.analysis_params['artifact_end']/220)
+            return pd.concat([
+                self.raw_data.loc[well_id][:start_idx],
+                self.raw_data.loc[well_id][end_idx:]
+            ])
+        return self.raw_data.loc[well_id]
+
+    # Modified selection toggle methods using the helpers
     def toggle_well_selection(self, index):
         """Toggle individual well selection and update plots"""
-        well_id = self.well_data[index]["well_id"]
-        was_selected = index in self.selection_state['wells']
+        previously_selected = set(self.selected_wells)
 
-        if was_selected:
+        if index in self.selection_state['wells']:
             self.selection_state['wells'].remove(index)
         else:
             self.selection_state['wells'].add(index)
 
         self.update_selection_state()
         self.update_well_appearances()
-
-        # Handle plot updates for this specific well
-        if self.raw_data is not None:
-            # Update raw plot if window exists
-            if hasattr(self, 'raw_plot_window'):
-                if was_selected and well_id in self.raw_plot_window.plot_items:
-                    # Remove trace
-                    self.raw_plot_window.plot_widget.removeItem(self.raw_plot_window.plot_items[well_id])
-                    del self.raw_plot_window.plot_items[well_id]
-                elif not was_selected and well_id in self.raw_data.index:
-                    # Add trace
-                    if self.remove_artifact:
-                        times = self.processed_time_points
-                        n_cols = self.raw_data.shape[1]
-                        start_idx = int(n_cols * self.analysis_params['artifact_start']/220)
-                        end_idx = int(n_cols * self.analysis_params['artifact_end']/220)
-                        values = pd.concat([
-                            self.raw_data.loc[well_id][:start_idx],
-                            self.raw_data.loc[well_id][end_idx:]
-                        ])
-                    else:
-                        times = pd.to_numeric(self.raw_data.columns, errors='coerce')
-                        values = self.raw_data.loc[well_id]
-
-                    self.raw_plot_window.plot_trace(well_id, times, values, self.well_data[index]["color"])
-
-            # Update ΔF/F₀ plot if window exists
-            if hasattr(self, 'dff_plot_window'):
-                if self.dff_data is None:
-                    self.process_data()
-
-                if was_selected and well_id in self.dff_plot_window.plot_items:
-                    # Remove trace
-                    self.dff_plot_window.plot_widget.removeItem(self.dff_plot_window.plot_items[well_id])
-                    del self.dff_plot_window.plot_items[well_id]
-                elif not was_selected and well_id in self.dff_data.index:
-                    # Add trace
-                    if self.remove_artifact:
-                        times = self.processed_time_points
-                    else:
-                        times = pd.to_numeric(self.raw_data.columns, errors='coerce')
-                    values = self.dff_data.loc[well_id]
-                    self.dff_plot_window.plot_trace(well_id, times, values, self.well_data[index]["color"])
-
-            # Update summary plots if window exists
-            if hasattr(self, 'summary_plot_window'):
-                self.update_summary_plots()
+        self.update_traces_for_selection_change(previously_selected)
 
     def toggle_row_selection(self, row_index):
         """Toggle row selection and update plots"""
-        # Store previous selection state for comparison
         previously_selected = set(self.selected_wells)
 
         if row_index in self.selection_state['rows']:
@@ -1530,62 +1558,10 @@ class WellPlateLabeler(QMainWindow):
 
         self.update_selection_state()
         self.update_well_appearances()
-
-        # Update plots based on changes
-        if self.raw_data is not None:
-            newly_selected = self.selected_wells - previously_selected
-            newly_unselected = previously_selected - self.selected_wells
-
-            # Handle removed wells
-            for idx in newly_unselected:
-                well_id = self.well_data[idx]["well_id"]
-                if hasattr(self, 'raw_plot_window'):
-                    if well_id in self.raw_plot_window.plot_items:
-                        self.raw_plot_window.plot_widget.removeItem(self.raw_plot_window.plot_items[well_id])
-                        del self.raw_plot_window.plot_items[well_id]
-
-                if hasattr(self, 'dff_plot_window'):
-                    if well_id in self.dff_plot_window.plot_items:
-                        self.dff_plot_window.plot_widget.removeItem(self.dff_plot_window.plot_items[well_id])
-                        del self.dff_plot_window.plot_items[well_id]
-
-            # Handle added wells
-            for idx in newly_selected:
-                well_id = self.well_data[idx]["well_id"]
-                if well_id in self.raw_data.index:
-                    if hasattr(self, 'raw_plot_window'):
-                        if self.remove_artifact:
-                            times = self.processed_time_points
-                            n_cols = self.raw_data.shape[1]
-                            start_idx = int(n_cols * self.analysis_params['artifact_start']/220)
-                            end_idx = int(n_cols * self.analysis_params['artifact_end']/220)
-                            values = pd.concat([
-                                self.raw_data.loc[well_id][:start_idx],
-                                self.raw_data.loc[well_id][end_idx:]
-                            ])
-                        else:
-                            times = pd.to_numeric(self.raw_data.columns, errors='coerce')
-                            values = self.raw_data.loc[well_id]
-                        self.raw_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
-
-                    if hasattr(self, 'dff_plot_window'):
-                        if self.dff_data is None:
-                            self.process_data()
-                        if well_id in self.dff_data.index:
-                            if self.remove_artifact:
-                                times = self.processed_time_points
-                            else:
-                                times = pd.to_numeric(self.raw_data.columns, errors='coerce')
-                            values = self.dff_data.loc[well_id]
-                            self.dff_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
-
-            # Update summary plots if they exist
-            if hasattr(self, 'summary_plot_window'):
-                self.update_summary_plots()
+        self.update_traces_for_selection_change(previously_selected)
 
     def toggle_column_selection(self, col_index):
         """Toggle column selection and update plots"""
-        # Store previous selection state for comparison
         previously_selected = set(self.selected_wells)
 
         if col_index in self.selection_state['cols']:
@@ -1595,62 +1571,10 @@ class WellPlateLabeler(QMainWindow):
 
         self.update_selection_state()
         self.update_well_appearances()
-
-        # Reuse the same plot update logic
-        if self.raw_data is not None:
-            newly_selected = self.selected_wells - previously_selected
-            newly_unselected = previously_selected - self.selected_wells
-
-            # Handle removed wells
-            for idx in newly_unselected:
-                well_id = self.well_data[idx]["well_id"]
-                if hasattr(self, 'raw_plot_window'):
-                    if well_id in self.raw_plot_window.plot_items:
-                        self.raw_plot_window.plot_widget.removeItem(self.raw_plot_window.plot_items[well_id])
-                        del self.raw_plot_window.plot_items[well_id]
-
-                if hasattr(self, 'dff_plot_window'):
-                    if well_id in self.dff_plot_window.plot_items:
-                        self.dff_plot_window.plot_widget.removeItem(self.dff_plot_window.plot_items[well_id])
-                        del self.dff_plot_window.plot_items[well_id]
-
-            # Handle added wells
-            for idx in newly_selected:
-                well_id = self.well_data[idx]["well_id"]
-                if well_id in self.raw_data.index:
-                    if hasattr(self, 'raw_plot_window'):
-                        if self.remove_artifact:
-                            times = self.processed_time_points
-                            n_cols = self.raw_data.shape[1]
-                            start_idx = int(n_cols * self.analysis_params['artifact_start']/220)
-                            end_idx = int(n_cols * self.analysis_params['artifact_end']/220)
-                            values = pd.concat([
-                                self.raw_data.loc[well_id][:start_idx],
-                                self.raw_data.loc[well_id][end_idx:]
-                            ])
-                        else:
-                            times = pd.to_numeric(self.raw_data.columns, errors='coerce')
-                            values = self.raw_data.loc[well_id]
-                        self.raw_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
-
-                    if hasattr(self, 'dff_plot_window'):
-                        if self.dff_data is None:
-                            self.process_data()
-                        if well_id in self.dff_data.index:
-                            if self.remove_artifact:
-                                times = self.processed_time_points
-                            else:
-                                times = pd.to_numeric(self.raw_data.columns, errors='coerce')
-                            values = self.dff_data.loc[well_id]
-                            self.dff_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
-
-            # Update summary plots if they exist
-            if hasattr(self, 'summary_plot_window'):
-                self.update_summary_plots()
+        self.update_traces_for_selection_change(previously_selected)
 
     def toggle_all_selection(self):
         """Toggle selection of all wells and update plots"""
-        # Store previous selection state for comparison
         previously_selected = set(self.selected_wells)
 
         self.selection_state['all_selected'] = not self.selection_state['all_selected']
@@ -1661,61 +1585,7 @@ class WellPlateLabeler(QMainWindow):
 
         self.update_selection_state()
         self.update_well_appearances()
-
-        # Update plots with the same logic as row/column selection
-        if self.raw_data is not None:
-            newly_selected = self.selected_wells - previously_selected
-            newly_unselected = previously_selected - self.selected_wells
-
-            # Handle removed wells
-            for idx in newly_unselected:
-                well_id = self.well_data[idx]["well_id"]
-                if hasattr(self, 'raw_plot_window'):
-                    if well_id in self.raw_plot_window.plot_items:
-                        self.raw_plot_window.plot_widget.removeItem(self.raw_plot_window.plot_items[well_id])
-                        del self.raw_plot_window.plot_items[well_id]
-
-                if hasattr(self, 'dff_plot_window'):
-                    if well_id in self.dff_plot_window.plot_items:
-                        self.dff_plot_window.plot_widget.removeItem(self.dff_plot_window.plot_items[well_id])
-                        del self.dff_plot_window.plot_items[well_id]
-
-            # Handle added wells
-            for idx in newly_selected:
-                well_id = self.well_data[idx]["well_id"]
-                if well_id in self.raw_data.index:
-                    if hasattr(self, 'raw_plot_window'):
-                        if self.remove_artifact:
-                            times = self.processed_time_points
-                            n_cols = self.raw_data.shape[1]
-                            start_idx = int(n_cols * self.analysis_params['artifact_start']/220)
-                            end_idx = int(n_cols * self.analysis_params['artifact_end']/220)
-                            values = pd.concat([
-                                self.raw_data.loc[well_id][:start_idx],
-                                self.raw_data.loc[well_id][end_idx:]
-                            ])
-                        else:
-                            times = pd.to_numeric(self.raw_data.columns, errors='coerce')
-                            values = self.raw_data.loc[well_id]
-                        self.raw_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
-
-                    if hasattr(self, 'dff_plot_window'):
-                        if self.dff_data is None:
-                            self.process_data()
-                        if well_id in self.dff_data.index:
-                            if self.remove_artifact:
-                                times = self.processed_time_points
-                            else:
-                                times = pd.to_numeric(self.raw_data.columns, errors='coerce')
-                            values = self.dff_data.loc[well_id]
-                            self.dff_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
-
-            # Update summary plots if they exist
-            if hasattr(self, 'summary_plot_window'):
-                self.update_summary_plots()
-
-            self.update_selection_state()
-            self.update_well_appearances()
+        self.update_traces_for_selection_change(previously_selected)
 
 
     def apply_label(self):
