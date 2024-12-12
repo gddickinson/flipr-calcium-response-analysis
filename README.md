@@ -5,233 +5,264 @@
 2. [Installation](#installation)
 3. [Getting Started](#getting-started)
 4. [Main Interface](#main-interface)
-5. [Data Loading and Processing](#data-loading-and-processing)
-6. [Well Selection and Labeling](#well-selection-and-labeling)
-7. [Analysis Features](#analysis-features)
-8. [Visualization Options](#visualization-options)
-9. [Data Export](#data-export)
-10. [Tips and Troubleshooting](#tips-and-troubleshooting)
+5. [Loading Data](#loading-data)
+6. [Plate Layout Configuration](#plate-layout-configuration)
+7. [Data Analysis](#data-analysis)
+8. [Visualization](#visualization)
+9. [Exporting Results](#exporting-results)
+10. [Troubleshooting](#troubleshooting)
 
 ## Introduction
-The FLIPR Analysis Tool is designed for analyzing calcium imaging data from FLIPR experiments. It provides an intuitive interface for data processing, visualization, and analysis of calcium responses in 96-well plate formats.
+
+The FLIPR Analysis Tool is a specialized software application designed for analyzing calcium imaging data from FLIPR (Fluorometric Imaging Plate Reader) experiments. It provides a comprehensive suite of tools for data processing, visualization, and analysis of calcium responses in 96-well plate formats.
+
+### Key Features
+- Interactive 96-well plate layout configuration
+- Raw and ΔF/F₀ trace visualization
+- Automated artifact removal
+- Statistical analysis with multiple metrics
+- Ionomycin normalization capability
+- Comprehensive data export options
+- Area Under Curve (AUC) analysis
+- Time to peak measurements
 
 ## Installation
-
-### Setting up the Environment
-1. Install Miniconda or Anaconda from https://docs.conda.io/en/latest/miniconda.html
-2. Open a terminal (or Anaconda Prompt on Windows)
-3. Create a new conda environment:
-```bash
-conda create -n flipr python=3.9
-conda activate flipr
-```
-
-### Installing Required Packages
-Install the required packages using conda and pip:
-```bash
-conda install pyqt numpy pandas
-conda install -c conda-forge pyqtgraph openpyxl
-```
-
-### Running the Tool
-1. Clone or download the source code
-2. Navigate to the code directory:
-```bash
-cd path/to/flipr-analysis
-```
-3. Run the tool:
-```bash
-python flipr_analysis.py
-```
-
-## Getting Started
 
 ### System Requirements
 - Python 3.9 or later
 - Required libraries:
-  - PyQt5: GUI framework
-  - pyqtgraph: Scientific plotting
-  - pandas: Data handling
-  - numpy: Numerical operations
-  - openpyxl: Excel export support
-- Sufficient memory to handle FLIPR data files
+  - PyQt5
+  - pandas
+  - numpy
+  - pyqtgraph
+  - openpyxl
 
-### Data Format
-The tool accepts FLIPR output files (.seq1) with the following characteristics:
-- Tab-delimited text format
-- Metadata in the first column
-- Raw time series intensity values from column 5 onwards
-- First row containing header values
+### Installation Steps
+1. Install Python from https://www.python.org/downloads/
+2. Install required packages using pip:
+```bash
+pip install PyQt5 pandas numpy pyqtgraph openpyxl
+```
+3. Download and run the FLIPR Analysis Tool script
+
+## Getting Started
+
+### Initial Setup
+1. Launch the application
+2. Configure analysis parameters (Analysis → Parameters)
+3. Load your FLIPR data file
+4. Configure your plate layout before analysis
+
+### File Formats
+The tool accepts FLIPR output files in the following formats:
+- .seq1 files (FLIPR native format)
+- Tab-delimited text files (.txt)
+- File must contain a header row and time-series data
 
 ## Main Interface
 
-### Layout Components
-1. **Plate Layout Tab**:
+### Window Layout
+The interface consists of two main tabs:
+1. **Plate Layout Tab**
    - 96-well plate grid
    - Well labeling controls
-   - Action buttons for layout management
-2. **Analysis Tab**:
+   - Mode selection
+   - Action buttons
+
+2. **Analysis Tab**
    - Plot controls
    - Analysis parameters
    - Results display
-   - Export functionality
+   - Export options
 
 ### Menu Bar
-- **Analysis**: Access to analysis parameters
-- **Help**: Access to this user manual and about information
+- **File**: Layout export options
+- **Analysis**: Parameter settings
+- **Help**: Manual and about information
 
-## Data Loading and Processing
+## Loading Data
 
-### Loading Data
-1. Click "Load Data" to open a file selection dialog
-2. Select your .seq1 file
-3. The data will be loaded and the well plate grid will be enabled
+### Loading a Data File
+1. Click "Load Data" or use File → Open
+2. Select your .seq1 or .txt file
+3. The file will be validated and loaded
+4. A confirmation message will appear upon successful loading
+
+### Data Validation
+The tool automatically checks for:
+- Correct file format
+- Complete header information
+- Valid numerical data
+- Appropriate number of columns
+
+## Plate Layout Configuration
+
+### Well Selection
+- Click individual wells to select/deselect
+- Click row headers (A-H) to select entire rows
+- Click column headers (1-12) to select entire columns
+- Click top-left corner to select all wells
+
+### Labeling Modes
+1. **Simple Label**
+   - Enter agonist name
+   - Enter concentration
+   - Enter sample ID
+   - Choose color
+   - Apply to selected wells
+
+2. **Log10 Series**
+   - Enter starting concentration
+   - Select multiple wells in order
+   - System calculates dilution series
+
+3. **Clear Wells**
+   - Removes all labels from selected wells
+
+### Color Coding
+- Click color button to open color picker
+- Colors help visualize different conditions
+- Colors are preserved in plots and exports
+
+## Data Analysis
 
 ### Analysis Parameters
 Access via Analysis → Parameters to set:
-- Artifact Start Frame: Start of injection artifact
+- Artifact Start Frame: Beginning of injection artifact
 - Artifact End Frame: End of injection artifact
-- Baseline Frames: Number of frames for baseline calculation
-- Peak Start Frame: Frame to start peak detection from
+- Baseline Frames: Number of frames for F₀ calculation
+- Peak Start Frame: Frame to begin peak detection
 
-## Well Selection and Labeling
+### Processing Options
+1. **Artifact Removal**
+   - Toggle "Remove Injection Artifact"
+   - Automatically removes specified frames
+   - Updates all calculations and plots
 
-### Selection Methods
-- **Individual Wells**: Click on wells to select/deselect
-- **Row Selection**: Click row labels (A-H)
-- **Column Selection**: Click column labels (1-12)
-- **All Wells**: Click top-left corner
+2. **Ionomycin Normalization**
+   - Toggle "Normalize to Ionomycin"
+   - Normalizes responses to ionomycin control
+   - Groups by sample ID
 
-### Labeling Options
-1. **Simple Label**:
-   - Enter agonist name
-   - Enter concentration (µM)
-   - Enter sample ID
-   - Select color (optional)
-   - Click "Apply Label"
+3. **Area Under Curve**
+   - Automatically calculated for all traces
+   - Displayed in summary plots and exports
+   - Uses trapezoidal integration
 
-2. **Log10 Series**:
-   - Enter starting concentration
-   - Select multiple wells (in order)
-   - System automatically calculates dilution series
+4. **Time to Peak**
+   - Calculated from start of response
+   - Accounts for artifact removal if enabled
+   - Shown in summary plots and exports
 
-## Analysis Features
+## Visualization
 
-### Injection Artifact Removal
-- Toggle "Remove Injection Artifact" checkbox
-- Removes specified frames around injection point
-- Updates all plots automatically
-
-### Ionomycin Normalization
-- Toggle "Normalize to Ionomycin" checkbox
-- Calculates responses as percentage of ionomycin response
-- Groups by sample ID if multiple samples present
-- Automatically excludes ionomycin groups from normalized plots
-
-### Data Processing
-The tool automatically:
-1. Calculates ΔF/F₀ from raw intensity values
-2. Removes injection artifacts if enabled
-3. Calculates peak responses
-4. Groups data based on labels
-
-## Visualization Options
-
-### Raw Traces
-- Shows raw intensity values
-- Individual well traces
-- Color-coded by group
-- Toggle with "Raw Traces" button
-
-### ΔF/F₀ Traces
-- Shows normalized calcium responses
-- Individual well traces
-- Color-coded by group
-- Toggle with "ΔF/F₀ Traces" button
-
-### Summary Plots
-Four tabs available:
-1. **Individual Traces**:
-   - All ΔF/F₀ traces grouped by condition
-   - Semi-transparent individual traces
+### Available Plot Types
+1. **Raw Traces**
+   - Shows raw intensity values
+   - Individual well traces
    - Color-coded by group
 
-2. **Mean Traces**:
-   - Mean ΔF/F₀ response per group
-   - SEM shown as shaded region
-   - Clear legend for each group
+2. **ΔF/F₀ Traces**
+   - Normalized calcium responses
+   - Baseline-corrected
+   - Color-coded by group
 
-3. **Peak Responses**:
-   - Bar graph of peak responses
-   - Error bars show SEM
-   - Groups clearly labeled
+3. **Summary Plots**
+   - Individual Traces: All responses by group
+   - Mean Traces: Average with SEM
+   - Peak Responses: Bar graphs with error bars
+   - Area Under Curve: AUC comparison
+   - Time to Peak: Response timing
+   - Normalized (when enabled): % of ionomycin
 
-4. **Normalized to Ionomycin** (when enabled):
-   - Responses as percentage of ionomycin
-   - Error bars show SEM
-   - Automatically excludes ionomycin controls
-   - Maintains group colors for easy comparison
+### Plot Controls
+- Toggle grid display
+- Clear individual plots
+- Show/hide legend
+- Export plots as images
 
-## Data Export
+## Exporting Results
 
 ### Excel Export
-Click "Export Results" to save data as a multi-sheet Excel workbook containing:
-1. **Summary**: Statistical overview of all groups including:
-   - Group names and concentrations
-   - Peak responses with SEM
-   - Time to peak measurements
+Creates a workbook with multiple sheets:
+1. **Summary**
+   - Group statistics
+   - Peak responses
+   - AUC values
+   - Time to peak
    - Normalized responses (if enabled)
 
-2. **Individual_Traces**: Complete trace data for each well including:
-   - Well IDs and group assignments
+2. **Individual_Traces**
+   - Complete trace data
+   - Well assignments
    - Concentrations
-   - Full time series data
 
-3. **Mean_Traces**: Averaged responses per group including:
-   - Time points
-   - Mean values
+3. **Mean_Traces**
+   - Averaged responses
    - SEM calculations
+   - Time points
 
-4. **Peak_Responses**: Maximum response data including:
-   - Well-by-well peak measurements
-   - Time to peak values
-   - Group assignments and concentrations
+4. **Peak_Responses**
+   - Maximum responses
+   - Time to peak
+   - AUC values
 
-5. **Ionomycin_Normalized**: (When enabled) Normalized response data including:
-   - Individual well responses
-   - Group statistics
-   - Sample IDs and corresponding ionomycin responses
+5. **Analysis_Metrics**
+   - Detailed statistics
+   - Group comparisons
+   - Quality metrics
 
-## Tips and Troubleshooting
+### FLIPR Format Export
+- Exports plate layout as .fmg file
+- Compatible with FLIPR software
+- Preserves groups and colors
 
-### Best Practices
-1. Load data first before selecting wells
-2. Set analysis parameters before processing
-3. Use consistent labeling for proper grouping
-4. Save layouts for repeated analysis
-5. Export results before closing for record keeping
+## Troubleshooting
 
 ### Common Issues
-1. **No plots appearing**:
-   - Ensure data is loaded
-   - Check well selection
-   - Verify analysis parameters
 
-2. **Missing groups in summary**:
-   - Check well labels
-   - Ensure consistent naming
-   - Verify group selection
+1. **Data Loading Problems**
+   - Check file format
+   - Verify data structure
+   - Ensure no missing values
 
-3. **Artifact removal issues**:
-   - Adjust frame parameters
-   - Check data alignment
-   - Verify timing in raw data
+2. **Plot Display Issues**
+   - Verify well selection
+   - Check data processing
+   - Confirm parameter settings
 
-4. **Export problems**:
-   - Ensure write permissions in target directory
-   - Close any open Excel files
-   - Check available disk space
+3. **Export Errors**
+   - Check file permissions
+   - Close existing Excel files
+   - Verify available disk space
+
+### Error Messages
+- Detailed error messages in status bar
+- Log file for debugging
+- Contact support for assistance
 
 ### Support
 For additional support or to report issues:
-george.dickinson@gmail.com
+[Insert your support contact information here]
+
+## Tips and Best Practices
+
+1. **Data Organization**
+   - Label wells before analysis
+   - Use consistent naming
+   - Save layouts for repeated experiments
+
+2. **Analysis Workflow**
+   - Set parameters first
+   - Verify well assignments
+   - Review raw data before processing
+
+3. **Quality Control**
+   - Check baseline stability
+   - Verify artifact removal
+   - Compare replicates
+
+4. **Data Export**
+   - Save layouts separately
+   - Document parameter settings
+   - Include all relevant metadata
