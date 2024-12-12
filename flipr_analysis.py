@@ -382,24 +382,38 @@ class WellPlateLabeler(QMainWindow):
 
     def update_selection_state(self):
         """Update the selection state based on current selections"""
-        if self.selection_state['all_selected']:
-            self.selected_wells = set(range(96))
-        else:
-            # Combine row, column and individual well selections
-            selected = set()
+        try:
+            if self.selection_state['all_selected']:
+                self.selected_wells = set(range(96))
+            else:
+                # Combine row, column and individual well selections
+                selected = set()
 
-            # Add wells from selected rows
-            for row in self.selection_state['rows']:
-                selected.update(range(row * 12, (row + 1) * 12))
+                # Add wells from selected rows
+                for row in self.selection_state['rows']:
+                    selected.update(range(row * 12, (row + 1) * 12))
 
-            # Add wells from selected columns
-            for col in self.selection_state['cols']:
-                selected.update(range(col, 96, 12))
+                # Add wells from selected columns
+                for col in self.selection_state['cols']:
+                    selected.update(range(col, 96, 12))
 
-            # Add individually selected wells
-            selected.update(self.selection_state['wells'])
+                # Add individually selected wells
+                selected.update(self.selection_state['wells'])
 
-            self.selected_wells = selected
+                self.selected_wells = selected
+
+            # Check if all wells are selected and update all_selected state
+            if len(self.selected_wells) == 96:
+                self.selection_state['all_selected'] = True
+                self.selection_state['rows'] = set()
+                self.selection_state['cols'] = set()
+                self.selection_state['wells'] = set()
+
+            logger.debug(f"Updated selection state: {len(self.selected_wells)} wells selected")
+
+        except Exception as e:
+            logger.error(f"Error updating selection state: {str(e)}")
+            logger.debug("Stack trace:", exc_info=True)
 
 
     def create_compact_action_buttons(self):
@@ -1460,101 +1474,211 @@ class WellPlateLabeler(QMainWindow):
 
     def update_traces_for_selection_change(self, previously_selected):
         """Helper function to update plot traces when selection changes"""
-        if self.raw_data is None:
-            return
+        try:
+            if self.raw_data is None:
+                logger.warning("Attempted to update traces with no data loaded")
+                return
 
-        newly_selected = self.selected_wells - previously_selected
-        newly_unselected = previously_selected - self.selected_wells
+            newly_selected = self.selected_wells - previously_selected
+            newly_unselected = previously_selected - self.selected_wells
 
-        # Remove traces for unselected wells
-        self.remove_traces(newly_unselected)
+            logger.info(f"Updating traces: {len(newly_selected)} wells to add, {len(newly_unselected)} wells to remove")
 
-        # Add traces for newly selected wells
-        self.add_traces(newly_selected)
+            # Remove traces for unselected wells
+            self.remove_traces(newly_unselected)
 
-        # Update summary plots if they exist
-        if hasattr(self, 'summary_plot_window'):
-            self.update_summary_plots()
+            # Add traces for newly selected wells
+            self.add_traces(newly_selected)
+
+            # Update summary plots if they exist
+            if hasattr(self, 'summary_plot_window'):
+                self.update_summary_plots()
+
+        except Exception as e:
+            logger.error(f"Error updating traces: {str(e)}")
+            logger.debug(f"Stack trace:", exc_info=True)
+            QMessageBox.warning(self, "Error", "Failed to update plot traces. See log for details.")
 
     def remove_traces(self, indices):
         """Remove traces for given well indices"""
         for idx in indices:
-            well_id = self.well_data[idx]["well_id"]
+            try:
+                well_id = self.well_data[idx]["well_id"]
+                logger.debug(f"Removing traces for well {well_id}")
 
-            # Remove from raw plot
-            if hasattr(self, 'raw_plot_window'):
-                if well_id in self.raw_plot_window.plot_items:
-                    self.raw_plot_window.plot_widget.removeItem(self.raw_plot_window.plot_items[well_id])
-                    del self.raw_plot_window.plot_items[well_id]
+                # Remove from raw plot
+                if hasattr(self, 'raw_plot_window'):
+                    if well_id in self.raw_plot_window.plot_items:
+                        self.raw_plot_window.plot_widget.removeItem(self.raw_plot_window.plot_items[well_id])
+                        del self.raw_plot_window.plot_items[well_id]
 
-            # Remove from ΔF/F₀ plot
-            if hasattr(self, 'dff_plot_window'):
-                if well_id in self.dff_plot_window.plot_items:
-                    self.dff_plot_window.plot_widget.removeItem(self.dff_plot_window.plot_items[well_id])
-                    del self.dff_plot_window.plot_items[well_id]
+                # Remove from ΔF/F₀ plot
+                if hasattr(self, 'dff_plot_window'):
+                    if well_id in self.dff_plot_window.plot_items:
+                        self.dff_plot_window.plot_widget.removeItem(self.dff_plot_window.plot_items[well_id])
+                        del self.dff_plot_window.plot_items[well_id]
+
+            except KeyError as e:
+                logger.error(f"Well data not found for index {idx}: {str(e)}")
+            except Exception as e:
+                logger.error(f"Error removing traces for well index {idx}: {str(e)}")
+                logger.debug("Stack trace:", exc_info=True)
 
     def add_traces(self, indices):
         """Add traces for given well indices"""
-        for idx in indices:
-            well_id = self.well_data[idx]["well_id"]
-            if well_id not in self.raw_data.index:
-                continue
-
+        try:
             times = self.get_time_points()
+        except Exception as e:
+            logger.error(f"Failed to get time points: {str(e)}")
+            logger.debug("Stack trace:", exc_info=True)
+            return
 
-            # Add to raw plot
-            if hasattr(self, 'raw_plot_window'):
-                values = self.get_raw_values(well_id)
-                self.raw_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
+        for idx in indices:
+            try:
+                well_id = self.well_data[idx]["well_id"]
+                if well_id not in self.raw_data.index:
+                    logger.warning(f"Well {well_id} not found in raw data")
+                    continue
 
-            # Add to ΔF/F₀ plot
-            if hasattr(self, 'dff_plot_window'):
-                if self.dff_data is None:
-                    self.process_data()
-                if well_id in self.dff_data.index:
-                    values = self.dff_data.loc[well_id]
-                    self.dff_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
+                logger.debug(f"Adding traces for well {well_id}")
+
+                # Add to raw plot
+                if hasattr(self, 'raw_plot_window'):
+                    try:
+                        values = self.get_raw_values(well_id)
+                        self.raw_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
+                    except Exception as e:
+                        logger.error(f"Error plotting raw trace for well {well_id}: {str(e)}")
+
+                # Add to ΔF/F₀ plot
+                if hasattr(self, 'dff_plot_window'):
+                    try:
+                        if self.dff_data is None:
+                            logger.info("Processing data for ΔF/F₀ calculation")
+                            self.process_data()
+                        if well_id in self.dff_data.index:
+                            values = self.dff_data.loc[well_id]
+                            self.dff_plot_window.plot_trace(well_id, times, values, self.well_data[idx]["color"])
+                        else:
+                            logger.warning(f"Well {well_id} not found in ΔF/F₀ data")
+                    except Exception as e:
+                        logger.error(f"Error plotting ΔF/F₀ trace for well {well_id}: {str(e)}")
+
+            except Exception as e:
+                logger.error(f"Error adding traces for well index {idx}: {str(e)}")
+                logger.debug("Stack trace:", exc_info=True)
 
     def get_time_points(self):
         """Get appropriate time points based on artifact removal setting"""
-        if self.remove_artifact:
-            return self.processed_time_points
-        return pd.to_numeric(self.raw_data.columns, errors='coerce')
+        try:
+            if self.remove_artifact:
+                if self.processed_time_points is None:
+                    raise ValueError("Processed time points not available")
+                return self.processed_time_points
+
+            times = pd.to_numeric(self.raw_data.columns, errors='coerce')
+            if times.isna().any():
+                logger.warning("Some time points could not be converted to numeric values")
+            return times
+
+        except Exception as e:
+            logger.error(f"Error getting time points: {str(e)}")
+            logger.debug("Stack trace:", exc_info=True)
+            raise
 
     def get_raw_values(self, well_id):
         """Get raw values for a well, handling artifact removal if enabled"""
-        if self.remove_artifact:
-            n_cols = self.raw_data.shape[1]
-            start_idx = int(n_cols * self.analysis_params['artifact_start']/220)
-            end_idx = int(n_cols * self.analysis_params['artifact_end']/220)
-            return pd.concat([
-                self.raw_data.loc[well_id][:start_idx],
-                self.raw_data.loc[well_id][end_idx:]
-            ])
-        return self.raw_data.loc[well_id]
+        try:
+            if self.remove_artifact:
+                n_cols = self.raw_data.shape[1]
+                start_idx = int(n_cols * self.analysis_params['artifact_start']/220)
+                end_idx = int(n_cols * self.analysis_params['artifact_end']/220)
 
-    # Modified selection toggle methods using the helpers
+                if start_idx >= end_idx:
+                    raise ValueError("Invalid artifact removal indices")
+
+                values = pd.concat([
+                    self.raw_data.loc[well_id][:start_idx],
+                    self.raw_data.loc[well_id][end_idx:]
+                ])
+                logger.debug(f"Artifact removed for well {well_id}: frames {start_idx}-{end_idx}")
+                return values
+
+            return self.raw_data.loc[well_id]
+
+        except KeyError:
+            logger.error(f"Well {well_id} not found in data")
+            raise
+        except Exception as e:
+            logger.error(f"Error getting raw values for well {well_id}: {str(e)}")
+            logger.debug("Stack trace:", exc_info=True)
+            raise
+
     def toggle_well_selection(self, index):
         """Toggle individual well selection and update plots"""
-        previously_selected = set(self.selected_wells)
+        try:
+            previously_selected = set(self.selected_wells)
 
-        if index in self.selection_state['wells']:
-            self.selection_state['wells'].remove(index)
-        else:
-            self.selection_state['wells'].add(index)
+            # Calculate which row and column this well belongs to
+            row = index // 12
+            col = index % 12
 
-        self.update_selection_state()
-        self.update_well_appearances()
-        self.update_traces_for_selection_change(previously_selected)
+            # If well is selected through row selection, convert row to individual selections
+            if row in self.selection_state['rows']:
+                logger.debug(f"Converting row {row} selection to individual wells")
+                self.selection_state['rows'].remove(row)
+                # Add all wells in this row except the clicked one to individual selections
+                for col_idx in range(12):
+                    well_idx = row * 12 + col_idx
+                    if well_idx != index:
+                        self.selection_state['wells'].add(well_idx)
+
+            # If well is selected through column selection, convert column to individual selections
+            if col in self.selection_state['cols']:
+                logger.debug(f"Converting column {col} selection to individual wells")
+                self.selection_state['cols'].remove(col)
+                # Add all wells in this column except the clicked one to individual selections
+                for row_idx in range(8):
+                    well_idx = row_idx * 12 + col
+                    if well_idx != index:
+                        self.selection_state['wells'].add(well_idx)
+
+            # If all wells are selected, convert to individual selections minus this one
+            if self.selection_state['all_selected']:
+                logger.debug("Converting 'all selected' to individual well selections")
+                self.selection_state['all_selected'] = False
+                self.selection_state['wells'] = set(range(96))
+                self.selection_state['wells'].remove(index)
+            # Normal individual well toggle
+            else:
+                if index in self.selection_state['wells']:
+                    self.selection_state['wells'].remove(index)
+                else:
+                    self.selection_state['wells'].add(index)
+
+            self.update_selection_state()
+            self.update_well_appearances()
+            self.update_traces_for_selection_change(previously_selected)
+
+        except Exception as e:
+            logger.error(f"Error in toggle_well_selection: {str(e)}")
+            logger.debug("Stack trace:", exc_info=True)
 
     def toggle_row_selection(self, row_index):
         """Toggle row selection and update plots"""
         previously_selected = set(self.selected_wells)
 
-        if row_index in self.selection_state['rows']:
+        # If all wells are selected, switch to row selection mode
+        if self.selection_state['all_selected']:
+            self.selection_state['all_selected'] = False
+            # Select all rows except the clicked one
+            self.selection_state['rows'] = set(range(8))
             self.selection_state['rows'].remove(row_index)
         else:
-            self.selection_state['rows'].add(row_index)
+            if row_index in self.selection_state['rows']:
+                self.selection_state['rows'].remove(row_index)
+            else:
+                self.selection_state['rows'].add(row_index)
 
         self.update_selection_state()
         self.update_well_appearances()
@@ -1564,10 +1688,17 @@ class WellPlateLabeler(QMainWindow):
         """Toggle column selection and update plots"""
         previously_selected = set(self.selected_wells)
 
-        if col_index in self.selection_state['cols']:
+        # If all wells are selected, switch to column selection mode
+        if self.selection_state['all_selected']:
+            self.selection_state['all_selected'] = False
+            # Select all columns except the clicked one
+            self.selection_state['cols'] = set(range(12))
             self.selection_state['cols'].remove(col_index)
         else:
-            self.selection_state['cols'].add(col_index)
+            if col_index in self.selection_state['cols']:
+                self.selection_state['cols'].remove(col_index)
+            else:
+                self.selection_state['cols'].add(col_index)
 
         self.update_selection_state()
         self.update_well_appearances()
@@ -1577,11 +1708,15 @@ class WellPlateLabeler(QMainWindow):
         """Toggle selection of all wells and update plots"""
         previously_selected = set(self.selected_wells)
 
-        self.selection_state['all_selected'] = not self.selection_state['all_selected']
-        if self.selection_state['all_selected']:
+        # If any wells are selected, first clear all selections
+        if self.selected_wells:
+            self.selection_state['all_selected'] = False
             self.selection_state['rows'] = set()
             self.selection_state['cols'] = set()
             self.selection_state['wells'] = set()
+        else:
+            # If no wells are selected, select all
+            self.selection_state['all_selected'] = True
 
         self.update_selection_state()
         self.update_well_appearances()
