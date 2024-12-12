@@ -243,7 +243,7 @@ Creates a workbook with multiple sheets:
 
 ### Support
 For additional support or to report issues:
-[Insert your support contact information here]
+[george.dickinson@gmail.com]
 
 ## Tips and Best Practices
 
