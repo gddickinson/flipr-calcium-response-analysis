@@ -22,6 +22,8 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 import datetime
 from io import StringIO
 import re
+from scipy.optimize import curve_fit
+from scipy.signal import find_peaks
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -45,7 +47,6 @@ def format_concentration(conc_str):
 
 
 # class definitions
-
 class ParametersDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -184,12 +185,17 @@ class SummaryPlotWindow(QMainWindow):
         self.individual_tab = QWidget()
         self.mean_tab = QWidget()
         self.responses_tab = QWidget()
-        self.normalized_tab = QWidget()  # New tab for ionomycin-normalized data
+        self.auc_tab = QWidget()  # New tab for AUC
+        self.time_to_peak_tab = QWidget()  # New tab for Time to Peak
+        self.normalized_tab = QWidget()
 
         self.tab_widget.addTab(self.individual_tab, "Individual Traces")
         self.tab_widget.addTab(self.mean_tab, "Mean Traces")
         self.tab_widget.addTab(self.responses_tab, "Peak Responses")
+        self.tab_widget.addTab(self.auc_tab, "Area Under Curve")
+        self.tab_widget.addTab(self.time_to_peak_tab, "Time to Peak")
         self.tab_widget.addTab(self.normalized_tab, "Normalized to Ionomycin")
+
 
         # Create plot widgets for each tab
         self.individual_plot = pg.PlotWidget()
@@ -212,7 +218,18 @@ class SummaryPlotWindow(QMainWindow):
         self.normalized_plot.setLabel('left', "Response (% Ionomycin)")
         self.normalized_plot.setLabel('bottom', "Group")
 
-        # Set up layouts for each tab
+        # Create plot widgets for AUC and Time to Peak
+        self.auc_plot = pg.PlotWidget()
+        self.auc_plot.setBackground('w')
+        self.auc_plot.setLabel('left', "Area Under Curve")
+        self.auc_plot.setLabel('bottom', "Group")
+
+        self.time_to_peak_plot = pg.PlotWidget()
+        self.time_to_peak_plot.setBackground('w')
+        self.time_to_peak_plot.setLabel('left', "Time to Peak (s)")
+        self.time_to_peak_plot.setLabel('bottom', "Group")
+
+        # Set up layouts for all tabs
         individual_layout = QVBoxLayout(self.individual_tab)
         individual_layout.addWidget(self.individual_plot)
 
@@ -221,6 +238,12 @@ class SummaryPlotWindow(QMainWindow):
 
         responses_layout = QVBoxLayout(self.responses_tab)
         responses_layout.addWidget(self.responses_plot)
+
+        auc_layout = QVBoxLayout(self.auc_tab)
+        auc_layout.addWidget(self.auc_plot)
+
+        time_to_peak_layout = QVBoxLayout(self.time_to_peak_tab)
+        time_to_peak_layout.addWidget(self.time_to_peak_plot)
 
         normalized_layout = QVBoxLayout(self.normalized_tab)
         normalized_layout.addWidget(self.normalized_plot)
@@ -232,6 +255,8 @@ class SummaryPlotWindow(QMainWindow):
         self.individual_plot.clear()
         self.mean_plot.clear()
         self.responses_plot.clear()
+        self.auc_plot.clear()
+        self.time_to_peak_plot.clear()
         self.normalized_plot.clear()
         self.plot_items = {}
 
@@ -254,6 +279,98 @@ class DataProcessor:
             data = data.iloc[:, start_frame:]
         return data.max(axis=1)
 
+    @staticmethod
+    def calculate_auc(data: pd.DataFrame, time_points: np.ndarray) -> pd.Series:
+        """Calculate area under the curve using trapezoidal integration"""
+        return pd.Series({
+            well: np.trapz(y=data.loc[well], x=time_points)
+            for well, row in data.iterrows()
+        })
+
+class PeakAnalyzer:
+    """Class for peak detection and fitting analysis"""
+
+    @staticmethod
+    def peak_function(x, amplitude, center, sigma, tau_rise, tau_decay):
+        """Define peak shape function - asymmetric gaussian with rise and decay"""
+        y = np.zeros_like(x)
+        for i, t in enumerate(x):
+            if t <= center:
+                # Rising phase
+                y[i] = amplitude * (1 - np.exp(-(t - (center - 5*tau_rise))/tau_rise))
+            else:
+                # Decay phase
+                y[i] = amplitude * np.exp(-(t - center)/tau_decay)
+        return y
+
+    def analyze_trace(self, times, values):
+        """Analyze a single trace"""
+        try:
+            # Find initial peak parameters
+            peaks, properties = find_peaks(values, prominence=0.2*np.max(values))
+            if len(peaks) == 0:
+                return None
+
+            peak_idx = peaks[np.argmax(values[peaks])]
+            peak_value = values[peak_idx]
+            peak_time = times[peak_idx]
+
+            # Initial parameter guesses
+            p0 = [
+                peak_value,  # amplitude
+                peak_time,   # center
+                2.0,        # sigma
+                2.0,        # tau_rise
+                5.0         # tau_decay
+            ]
+
+            # Fit curve
+            popt, _ = curve_fit(self.peak_function, times, values, p0=p0)
+
+            # Calculate metrics
+            fitted_curve = self.peak_function(times, *popt)
+            auc = np.trapz(y=fitted_curve, x=times)
+
+            # Find FWHM
+            half_max = popt[0] / 2
+            rise_time = self.find_rise_time(times, fitted_curve, popt[1])
+            fwhm = self.find_fwhm(times, fitted_curve)
+
+            return {
+                'amplitude': popt[0],
+                'peak_time': popt[1],
+                'rise_time': rise_time,
+                'tau_decay': popt[4],
+                'fwhm': fwhm,
+                'auc': auc,
+                'fitted_curve': fitted_curve
+            }
+
+        except Exception as e:
+            logger.error(f"Peak fitting failed: {str(e)}")
+            return None
+
+    @staticmethod
+    def find_rise_time(times, values, peak_time):
+        """Calculate 10-90% rise time"""
+        peak_idx = np.argmin(np.abs(times - peak_time))
+        max_val = values[peak_idx]
+        t10_idx = np.argmin(np.abs(values[:peak_idx] - 0.1*max_val))
+        t90_idx = np.argmin(np.abs(values[:peak_idx] - 0.9*max_val))
+        return times[t90_idx] - times[t10_idx]
+
+    @staticmethod
+    def find_fwhm(times, values):
+        """Calculate Full Width at Half Maximum"""
+        max_val = np.max(values)
+        half_max = max_val / 2
+        above_half = values >= half_max
+        regions = np.diff(above_half.astype(int))
+        rising = np.where(regions == 1)[0]
+        falling = np.where(regions == -1)[0]
+        if len(rising) > 0 and len(falling) > 0:
+            return times[falling[0]] - times[rising[0]]
+        return None
 
 class WellPlateLabeler(QMainWindow):
     """Main application window"""
@@ -383,37 +500,44 @@ class WellPlateLabeler(QMainWindow):
     def update_selection_state(self):
         """Update the selection state based on current selections"""
         try:
+            # Create a new set for selected wells
+            selected = set()
+
+            # Add wells from rows
+            for row in self.selection_state['rows']:
+                selected.update(range(row * 12, (row + 1) * 12))
+
+            # Add wells from columns
+            for col in self.selection_state['cols']:
+                selected.update(range(col, 96, 12))
+
+            # Add individual wells
+            selected.update(self.selection_state['wells'])
+
+            # If all wells are selected, override everything
             if self.selection_state['all_selected']:
-                self.selected_wells = set(range(96))
-            else:
-                # Combine row, column and individual well selections
-                selected = set()
+                selected = set(range(96))
 
-                # Add wells from selected rows
-                for row in self.selection_state['rows']:
-                    selected.update(range(row * 12, (row + 1) * 12))
+            # Update the selected_wells set
+            self.selected_wells = selected
 
-                # Add wells from selected columns
-                for col in self.selection_state['cols']:
-                    selected.update(range(col, 96, 12))
-
-                # Add individually selected wells
-                selected.update(self.selection_state['wells'])
-
-                self.selected_wells = selected
-
-            # Check if all wells are selected and update all_selected state
-            if len(self.selected_wells) == 96:
-                self.selection_state['all_selected'] = True
-                self.selection_state['rows'] = set()
-                self.selection_state['cols'] = set()
-                self.selection_state['wells'] = set()
-
-            logger.debug(f"Updated selection state: {len(self.selected_wells)} wells selected")
+            # Update visual appearance of wells
+            for idx in range(96):
+                is_selected = idx in self.selected_wells
+                color = 'lightblue' if is_selected else self.well_data[idx]['color']
+                self.wells[idx].setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {color};
+                        padding: 2px;
+                        font-size: 12pt;
+                        color: black;
+                    }}
+                """)
 
         except Exception as e:
             logger.error(f"Error updating selection state: {str(e)}")
-            logger.debug("Stack trace:", exc_info=True)
+            QMessageBox.warning(self, "Error",
+                              "Failed to update well selection. See log for details.")
 
 
     def create_compact_action_buttons(self):
@@ -683,6 +807,7 @@ class WellPlateLabeler(QMainWindow):
         # Calculate and display statistics for each group
         for group_name, well_ids in grouped_data.items():
             group_data = self.dff_data.loc[well_ids]
+            group_auc = self.auc_data[well_ids]
 
             # Calculate peak responses
             peaks = group_data.max(axis=1)
@@ -694,11 +819,18 @@ class WellPlateLabeler(QMainWindow):
             time_to_peak_mean = peak_times.mean()
             time_to_peak_sem = peak_times.std() / np.sqrt(len(peak_times))
 
+            # Calculate AUC statistics
+            auc_mean = group_auc.mean()
+            auc_sem = group_auc.std() / np.sqrt(len(group_auc))
+
+
             # Write group statistics
             buffer.write(f"Group: {group_name}\n")
             buffer.write(f"Number of wells: {len(well_ids)}\n")
             buffer.write(f"Peak ΔF/F₀: {peak_mean:.2f} ± {peak_sem:.2f} \n")
             buffer.write(f"Time to peak: {time_to_peak_mean:.2f} ± {time_to_peak_sem:.2f} s\n")
+            buffer.write(f"Area Under Curve: {auc_mean:.2f} ± {auc_sem:.2f}\n")
+
 
             # Add ionomycin normalization if enabled
             if self.normalize_to_ionomycin:
@@ -743,19 +875,13 @@ class WellPlateLabeler(QMainWindow):
         try:
             wb = Workbook()
 
-            # Summary sheet
+            # Create all sheets
             self.create_summary_sheet(wb)
-
-            # Individual traces sheet
             self.create_traces_sheet(wb, "Individual_Traces", self.dff_data)
-
-            # Mean traces sheet
             self.create_mean_traces_sheet(wb)
-
-            # Peak responses sheet
             self.create_peak_responses_sheet(wb)
+            self.create_analysis_metrics_sheet(wb)  # New detailed metrics sheet
 
-            # Ionomycin normalized sheet (if applicable)
             if self.normalize_to_ionomycin:
                 self.create_normalized_sheet(wb)
 
@@ -774,9 +900,13 @@ class WellPlateLabeler(QMainWindow):
         """Create summary sheet with statistics and concentrations"""
         ws = wb.create_sheet("Summary")
 
-        # Add headers
-        headers = ["Group", "Concentration (µM)", "Wells", "Peak ΔF/F₀ (mean)", "Peak ΔF/F₀ (SEM)",
-                  "Time to Peak (s)", "Time to Peak SEM"]
+        # Add headers - now including AUC and Time to Peak
+        headers = [
+            "Group", "Concentration (µM)", "Wells",
+            "Peak ΔF/F₀ (mean)", "Peak ΔF/F₀ (SEM)",
+            "Time to Peak (s)", "Time to Peak SEM",
+            "AUC (mean)", "AUC (SEM)"
+        ]
         if self.normalize_to_ionomycin:
             headers.extend(["Norm. Response (%)", "Norm. Response SEM"])
 
@@ -790,10 +920,13 @@ class WellPlateLabeler(QMainWindow):
 
         for group_name, well_ids in grouped_data.items():
             group_data = self.dff_data.loc[well_ids]
+
+            # Calculate statistics
             peaks = group_data.max(axis=1)
             peak_times = group_data.idxmax(axis=1).astype(float)
+            group_auc = self.auc_data[well_ids]
 
-            # Extract concentration if present in group name
+            # Extract concentration if present
             concentration = ""
             if "|" in group_name:
                 parts = group_name.split("|")
@@ -801,19 +934,22 @@ class WellPlateLabeler(QMainWindow):
                     if "µM" in part:
                         concentration = part.strip().replace(" µM", "")
 
+            # Write data to cells
             ws.cell(row=row, column=1, value=group_name)
             ws.cell(row=row, column=2, value=concentration)
             ws.cell(row=row, column=3, value=len(well_ids))
-            ws.cell(row=row, column=4, value=peaks.mean())
-            ws.cell(row=row, column=5, value=peaks.std() / np.sqrt(len(peaks)))
-            ws.cell(row=row, column=6, value=peak_times.mean())
-            ws.cell(row=row, column=7, value=peak_times.std() / np.sqrt(len(peak_times)))
+            ws.cell(row=row, column=4, value=float(peaks.mean()))
+            ws.cell(row=row, column=5, value=float(peaks.std() / np.sqrt(len(peaks))))
+            ws.cell(row=row, column=6, value=float(peak_times.mean()))
+            ws.cell(row=row, column=7, value=float(peak_times.std() / np.sqrt(len(peak_times))))
+            ws.cell(row=row, column=8, value=float(group_auc.mean()))
+            ws.cell(row=row, column=9, value=float(group_auc.std() / np.sqrt(len(group_auc))))
 
             if self.normalize_to_ionomycin:
                 normalized_data = self.calculate_normalized_responses(group_name, well_ids)
                 if normalized_data:
-                    ws.cell(row=row, column=8, value=normalized_data['mean'])
-                    ws.cell(row=row, column=9, value=normalized_data['sem'])
+                    ws.cell(row=row, column=10, value=normalized_data['mean'])
+                    ws.cell(row=row, column=11, value=normalized_data['sem'])
 
             row += 1
 
@@ -888,7 +1024,10 @@ class WellPlateLabeler(QMainWindow):
         ws = wb.create_sheet("Peak_Responses")
 
         # Add headers
-        headers = ["Group", "Well ID", "Concentration (µM)", "Peak ΔF/F₀", "Time to Peak (s)"]
+        headers = [
+            "Group", "Well ID", "Concentration (µM)",
+            "Peak ΔF/F₀", "Time to Peak (s)", "AUC"
+        ]
         for col, header in enumerate(headers, 1):
             ws.cell(row=1, column=col, value=header)
 
@@ -905,12 +1044,14 @@ class WellPlateLabeler(QMainWindow):
                 trace = self.dff_data.loc[well_id]
                 peak = trace.max()
                 peak_time = float(trace.idxmax())
+                auc = self.auc_data[well_id]
 
                 ws.cell(row=row, column=1, value=group_name)
                 ws.cell(row=row, column=2, value=well_id)
                 ws.cell(row=row, column=3, value=concentration)
                 ws.cell(row=row, column=4, value=float(peak))
-                ws.cell(row=row, column=5, value=peak_time)
+                ws.cell(row=row, column=5, value=float(peak_time))
+                ws.cell(row=row, column=6, value=float(auc))
                 row += 1
 
     def create_normalized_sheet(self, wb):
@@ -952,6 +1093,51 @@ class WellPlateLabeler(QMainWindow):
                     ws.cell(row=row, column=5, value=sample_id)
                     ws.cell(row=row, column=6, value=float(ionomycin_response))
                     row += 1
+
+    def create_analysis_metrics_sheet(self, wb):
+        """Create new sheet with detailed analysis metrics"""
+        ws = wb.create_sheet("Analysis_Metrics")
+
+        # Add headers
+        headers = [
+            "Group", "Metric", "Mean", "SEM",
+            "Min", "Max", "N"
+        ]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = Font(bold=True)
+
+        # Add data
+        row = 2
+        grouped_data = self.group_data_by_metadata()
+
+        for group_name, well_ids in grouped_data.items():
+            group_data = self.dff_data.loc[well_ids]
+
+            # Calculate metrics
+            peaks = group_data.max(axis=1)
+            peak_times = group_data.idxmax(axis=1).astype(float)
+            group_auc = self.auc_data[well_ids]
+
+            # Add peak response metrics
+            metrics = [
+                ("Peak ΔF/F₀", peaks),
+                ("Time to Peak (s)", peak_times),
+                ("AUC", group_auc)
+            ]
+
+            for metric_name, values in metrics:
+                ws.cell(row=row, column=1, value=group_name)
+                ws.cell(row=row, column=2, value=metric_name)
+                ws.cell(row=row, column=3, value=float(values.mean()))
+                ws.cell(row=row, column=4, value=float(values.std() / np.sqrt(len(values))))
+                ws.cell(row=row, column=5, value=float(values.min()))
+                ws.cell(row=row, column=6, value=float(values.max()))
+                ws.cell(row=row, column=7, value=len(values))
+                row += 1
+
+            # Add blank row between groups
+            row += 1
 
     def setup_plot_controls(self, layout):
         """Set up plot control buttons"""
@@ -1349,6 +1535,74 @@ class WellPlateLabeler(QMainWindow):
 
                             non_ionomycin_count += 1  # Increment counter for next non-ionomycin group
 
+                # Calculate AUC for this group
+                group_auc = self.auc_data[well_ids]
+                auc_mean = group_auc.mean()
+                auc_sem = group_auc.std() / np.sqrt(len(group_auc))
+
+                # Calculate time to peak
+                peak_times = group_data.idxmax(axis=1).astype(float)
+                time_to_peak_mean = peak_times.mean()
+                time_to_peak_sem = peak_times.std() / np.sqrt(len(peak_times))
+
+                # Add AUC bar
+                auc_bar = pg.BarGraphItem(
+                    x=[i],
+                    height=[auc_mean],
+                    width=0.8,
+                    brush=main_color
+                )
+                self.summary_plot_window.auc_plot.addItem(auc_bar)
+
+                # Add AUC error bars
+                auc_error = pg.ErrorBarItem(
+                    x=np.array([i]),
+                    y=np.array([auc_mean]),
+                    height=np.array([auc_sem * 2]),
+                    beam=0.2,
+                    pen=pg.mkPen(main_color, width=2)
+                )
+                self.summary_plot_window.auc_plot.addItem(auc_error)
+
+                # Add AUC value label
+                auc_text = pg.TextItem(
+                    text=f'{auc_mean:.1f}±{auc_sem:.1f}',
+                    color=main_color,
+                    anchor=(0.5, 1)
+                )
+                auc_text.setPos(i, auc_mean + auc_sem * 2)
+                self.summary_plot_window.auc_plot.addItem(auc_text)
+
+                # Add Time to Peak bar
+                ttp_bar = pg.BarGraphItem(
+                    x=[i],
+                    height=[time_to_peak_mean],
+                    width=0.8,
+                    brush=main_color
+                )
+                self.summary_plot_window.time_to_peak_plot.addItem(ttp_bar)
+
+                # Add Time to Peak error bars
+                ttp_error = pg.ErrorBarItem(
+                    x=np.array([i]),
+                    y=np.array([time_to_peak_mean]),
+                    height=np.array([time_to_peak_sem * 2]),
+                    beam=0.2,
+                    pen=pg.mkPen(main_color, width=2)
+                )
+                self.summary_plot_window.time_to_peak_plot.addItem(ttp_error)
+
+                # Add Time to Peak value label
+                ttp_text = pg.TextItem(
+                    text=f'{time_to_peak_mean:.1f}±{time_to_peak_sem:.1f}',
+                    color=main_color,
+                    anchor=(0.5, 1)
+                )
+                ttp_text.setPos(i, time_to_peak_mean + time_to_peak_sem * 2)
+                self.summary_plot_window.time_to_peak_plot.addItem(ttp_text)
+
+
+
                 logger.info(f"Successfully plotted group {group_name}")
 
             except Exception as e:
@@ -1391,6 +1645,18 @@ class WellPlateLabeler(QMainWindow):
             axis.setTicks([norm_ticks])
             self.summary_plot_window.normalized_plot.setXRange(-0.5, len(non_ionomycin_groups) - 0.5)
 
+        # Update AUC plot labels and axes
+        axis = self.summary_plot_window.auc_plot.getAxis('bottom')
+        ticks = [(i, name) for i, name in enumerate(grouped_data.keys())]
+        axis.setTicks([ticks])
+        self.summary_plot_window.auc_plot.setXRange(-0.5, len(grouped_data) - 0.5)
+
+        # Update Time to Peak plot labels and axes
+        axis = self.summary_plot_window.time_to_peak_plot.getAxis('bottom')
+        axis.setTicks([ticks])
+        self.summary_plot_window.time_to_peak_plot.setXRange(-0.5, len(grouped_data) - 0.5)
+
+
         # Update results text
         self.update_results_text()
 
@@ -1413,6 +1679,10 @@ class WellPlateLabeler(QMainWindow):
     def load_data(self, file_path: str) -> Tuple[pd.DataFrame, str]:
         """Load and preprocess FLIPR data from file."""
         try:
+            # Validate file extension
+            if not file_path.endswith(('.txt', '.seq1')):
+                raise ValueError("Invalid file format. Must be .txt or .seq1")
+
             # Read header
             with open(file_path, 'r') as f:
                 header = f.readline().strip().split('\t')
@@ -1903,6 +2173,12 @@ class WellPlateLabeler(QMainWindow):
 
             # Calculate ΔF/F₀
             self.dff_data = self.processor.calculate_dff(processed_data, F0)
+
+            # Calculate AUC for ΔF/F₀ traces
+            self.auc_data = self.processor.calculate_auc(
+                self.dff_data,
+                self.processed_time_points
+            )
 
             logger.info("Data processing completed successfully")
             logger.info(f"Processed data shape: {processed_data.shape}")
