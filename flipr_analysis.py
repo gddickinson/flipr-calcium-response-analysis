@@ -2188,7 +2188,33 @@ class WellPlateLabeler(QMainWindow):
             logger.error(f"Error processing data: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to process data: {str(e)}")
 
+    def calculate_normalized_responses(self, group_name: str, well_ids: list) -> dict:
+        """Calculate normalized responses for a group of wells"""
+        if "ionomycin" in group_name.lower():
+            return None
 
+        ionomycin_responses = self.get_ionomycin_responses()
+        if not ionomycin_responses:
+            return None
+
+        normalized_peaks = []
+        for well_id in well_ids:
+            well_idx = next(idx for idx in range(96) if self.well_data[idx]["well_id"] == well_id)
+            sample_id = self.well_data[well_idx].get("sample_id", "default")
+            ionomycin_response = ionomycin_responses.get(sample_id)
+
+            if ionomycin_response:
+                peak = self.dff_data.loc[well_id].max()
+                normalized_peaks.append((peak / ionomycin_response) * 100)
+
+        if normalized_peaks:
+            normalized_peaks = np.array(normalized_peaks)
+            return {
+                'mean': float(np.mean(normalized_peaks)),
+                'sem': float(np.std(normalized_peaks) / np.sqrt(len(normalized_peaks)))
+            }
+
+        return None
 
     def update_plots(self):
         """Update all plot windows"""
