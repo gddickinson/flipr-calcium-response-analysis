@@ -897,12 +897,12 @@ class WellPlateLabeler(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to export results: {str(e)}")
 
     def create_summary_sheet(self, wb):
-        """Create summary sheet with statistics and concentrations"""
+        """Create summary sheet with statistics, concentrations, and metadata"""
         ws = wb.create_sheet("Summary")
 
-        # Add headers - now including AUC and Time to Peak
+        # Add headers - including agonist and cell ID
         headers = [
-            "Group", "Concentration (µM)", "Wells",
+            "Group", "Agonist", "Cell ID", "Concentration (µM)", "Wells",
             "Peak ΔF/F₀ (mean)", "Peak ΔF/F₀ (SEM)",
             "Time to Peak (s)", "Time to Peak SEM",
             "AUC (mean)", "AUC (SEM)"
@@ -926,32 +926,56 @@ class WellPlateLabeler(QMainWindow):
             peak_times = group_data.idxmax(axis=1).astype(float)
             group_auc = self.auc_data[well_ids]
 
-            # Extract concentration if present
+            # Extract metadata from group name
+            agonist = ""
+            cell_id = ""
             concentration = ""
             if "|" in group_name:
-                parts = group_name.split("|")
-                for part in parts:
+                parts = [part.strip() for part in group_name.split("|")]
+                # First part is typically the agonist name
+                if parts:
+                    agonist = parts[0]
+                # Look for concentration and cell ID in remaining parts
+                for part in parts[1:]:
                     if "µM" in part:
-                        concentration = part.strip().replace(" µM", "")
+                        concentration = part.replace(" µM", "")
+                    elif not cell_id:  # Assume any non-concentration part is cell ID
+                        cell_id = part
 
             # Write data to cells
-            ws.cell(row=row, column=1, value=group_name)
-            ws.cell(row=row, column=2, value=concentration)
-            ws.cell(row=row, column=3, value=len(well_ids))
-            ws.cell(row=row, column=4, value=float(peaks.mean()))
-            ws.cell(row=row, column=5, value=float(peaks.std() / np.sqrt(len(peaks))))
-            ws.cell(row=row, column=6, value=float(peak_times.mean()))
-            ws.cell(row=row, column=7, value=float(peak_times.std() / np.sqrt(len(peak_times))))
-            ws.cell(row=row, column=8, value=float(group_auc.mean()))
-            ws.cell(row=row, column=9, value=float(group_auc.std() / np.sqrt(len(group_auc))))
+            current_col = 1
+            ws.cell(row=row, column=current_col, value=group_name); current_col += 1
+            ws.cell(row=row, column=current_col, value=agonist); current_col += 1
+            ws.cell(row=row, column=current_col, value=cell_id); current_col += 1
+            ws.cell(row=row, column=current_col, value=concentration); current_col += 1
+            ws.cell(row=row, column=current_col, value=len(well_ids)); current_col += 1
+            ws.cell(row=row, column=current_col, value=float(peaks.mean())); current_col += 1
+            ws.cell(row=row, column=current_col, value=float(peaks.std() / np.sqrt(len(peaks)))); current_col += 1
+            ws.cell(row=row, column=current_col, value=float(peak_times.mean())); current_col += 1
+            ws.cell(row=row, column=current_col, value=float(peak_times.std() / np.sqrt(len(peak_times)))); current_col += 1
+            ws.cell(row=row, column=current_col, value=float(group_auc.mean())); current_col += 1
+            ws.cell(row=row, column=current_col, value=float(group_auc.std() / np.sqrt(len(group_auc)))); current_col += 1
 
             if self.normalize_to_ionomycin:
                 normalized_data = self.calculate_normalized_responses(group_name, well_ids)
                 if normalized_data:
-                    ws.cell(row=row, column=10, value=normalized_data['mean'])
-                    ws.cell(row=row, column=11, value=normalized_data['sem'])
+                    ws.cell(row=row, column=current_col, value=normalized_data['mean']); current_col += 1
+                    ws.cell(row=row, column=current_col, value=normalized_data['sem'])
 
             row += 1
+
+        # Auto-adjust column widths
+        for column in ws.columns:
+            max_length = 0
+            column = list(column)
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = (max_length + 2)
+            ws.column_dimensions[column[0].column_letter].width = adjusted_width
 
     def create_traces_sheet(self, wb, sheet_name, data):
         """Create sheet with trace data including concentrations"""
