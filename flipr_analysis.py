@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
     QGroupBox, QScrollArea, QTextEdit
 )
 from PyQt5.QtGui import QColor, QFont
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 import pyqtgraph as pg
 import json
 
@@ -378,30 +378,53 @@ class WellPlateLabeler(QMainWindow):
         super().__init__()
         self.setWindowTitle("FLIPR Analysis")
 
-        # Set window size (width: 1200, height: 800 pixels)
+        # Set window size and font
         self.resize(1000, 800)
-        # To prevent resizing, use:
-        # self.setFixedSize(1200, 800)
-        # To maximise
-        # self.showMaximized()
-        # To center
-        # qr = self.frameGeometry()
-        # cp = QApplication.desktop().availableGeometry().center()
-        # qr.moveCenter(cp)
-        # self.move(qr.topLeft())
-
-        # Set smaller default font size
         self.default_font = QFont()
-        self.default_font.setPointSize(12)  # Reduce from default size
+        self.default_font.setPointSize(12)
         QApplication.setFont(self.default_font)
 
-        # Initialize data and create UI (rest of __init__ remains the same)
-        self.init_data()
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-        self.layout = QVBoxLayout(self.central_widget)
+        # Create file info and status bar group
+        info_widget = QWidget()
+        info_layout = QHBoxLayout()
+        info_layout.setSpacing(2)
+        info_layout.setContentsMargins(5, 0, 5, 0)
+
+        # Add file label and display
+        file_label = QLabel("Current File:")
+        self.file_display = QLineEdit()
+        self.file_display.setReadOnly(True)
+        self.file_display.setPlaceholderText("No file loaded")
+
+        # Add status message display
+        self.status_display = QLineEdit()
+        self.status_display.setReadOnly(True)
+        self.status_display.setPlaceholderText("Ready")
+
+        # Add widgets to info layout
+        info_layout.addWidget(file_label)
+        info_layout.addWidget(self.file_display, stretch=1)  # Give file display more space
+        info_layout.addWidget(self.status_display, stretch=2)  # Give status display even more space
+        info_widget.setLayout(info_layout)
+
+        # Create main layout
+        main_widget = QWidget()
+        main_layout = QVBoxLayout()
+        main_layout.setSpacing(2)
+        main_layout.setContentsMargins(5, 5, 5, 5)
+
+        # Add info widget at top
+        main_layout.addWidget(info_widget)
+
+        # Add tab widget
         self.tab_widget = QTabWidget()
-        self.layout.addWidget(self.tab_widget)
+        main_layout.addWidget(self.tab_widget)
+
+        main_widget.setLayout(main_layout)
+        self.setCentralWidget(main_widget)
+
+        # Initialize rest of the GUI
+        self.init_data()
         self.setup_plate_tab()
         self.setup_analysis_tab()
         self.create_menus()
@@ -496,6 +519,13 @@ class WellPlateLabeler(QMainWindow):
 
         input_group.setLayout(input_layout)
         return input_group
+
+    def show_status(self, message: str, duration: int = 0):
+        """Display a status message. Duration in ms (0 = permanent)"""
+        self.status_display.setText(message)
+        if duration > 0:
+            QTimer.singleShot(duration, lambda: self.status_display.setText("Ready"))
+
 
     def update_selection_state(self):
         """Update the selection state based on current selections"""
@@ -858,6 +888,7 @@ class WellPlateLabeler(QMainWindow):
     def export_results(self):
         """Export results to Excel workbook"""
         if self.dff_data is None:
+            self.show_status("No data to export", 3000)
             QMessageBox.warning(self, "Warning", "No data to export")
             return
 
@@ -873,6 +904,7 @@ class WellPlateLabeler(QMainWindow):
             return
 
         try:
+            self.show_status("Exporting results...")
             wb = Workbook()
 
             # Create all sheets
@@ -891,10 +923,13 @@ class WellPlateLabeler(QMainWindow):
 
             # Save workbook
             wb.save(file_path)
+            self.show_status("Results exported successfully", 3000)
             QMessageBox.information(self, "Success", "Results exported successfully")
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to export results: {str(e)}")
+            error_msg = f"Failed to export results: {str(e)}"
+            self.show_status(error_msg, 5000)
+            QMessageBox.critical(self, "Error", error_msg)
 
     def create_summary_sheet(self, wb):
         """Create summary sheet with statistics, concentrations, and baseline values"""
@@ -1441,6 +1476,7 @@ class WellPlateLabeler(QMainWindow):
 
     def update_summary_plots(self):
         """Update summary plots based on grouped data"""
+        self.show_status("Updating plots...")
         logger.info("Starting summary plot update...")
 
         if self.dff_data is None:
@@ -1670,6 +1706,7 @@ class WellPlateLabeler(QMainWindow):
 
                 logger.info(f"Successfully plotted group {group_name}")
 
+
             except Exception as e:
                 logger.error(f"Error plotting group {group_name}: {str(e)}")
                 import traceback
@@ -1725,6 +1762,7 @@ class WellPlateLabeler(QMainWindow):
         # Update results text
         self.update_results_text()
 
+        self.show_status("Plots updated", 3000)
         logger.info("Summary plot update completed")
 
 
@@ -1735,10 +1773,14 @@ class WellPlateLabeler(QMainWindow):
                                                  "Text Files (*.txt *.seq1);;All Files (*)", options=options)
         if file_path:
             try:
+                self.show_status("Loading data...")
                 self.raw_data, self.original_filename = self.load_data(file_path)
-                QMessageBox.information(self, "Data Loaded", f"Data loaded from {self.original_filename}")
+                self.file_display.setText(self.original_filename)
+                self.show_status(f"Data loaded successfully", 3000)
             except Exception as e:
+                self.show_status(f"Error: {str(e)}", 5000)
                 QMessageBox.critical(self, "Error", f"Failed to load data: {str(e)}")
+
 
 
     def load_data(self, file_path: str) -> Tuple[pd.DataFrame, str]:
@@ -2207,6 +2249,8 @@ class WellPlateLabeler(QMainWindow):
             return
 
         try:
+            self.show_status("Processing data...")
+
             # Work with a copy of the raw data
             processed_data = self.raw_data.copy()
 
@@ -2245,13 +2289,16 @@ class WellPlateLabeler(QMainWindow):
                 self.processed_time_points
             )
 
+            self.show_status("Data processing completed", 3000)
             logger.info("Data processing completed successfully")
             logger.info(f"Processed data shape: {processed_data.shape}")
             logger.info(f"Time points shape: {self.processed_time_points.shape}")
 
         except Exception as e:
-            logger.error(f"Error processing data: {str(e)}")
-            QMessageBox.critical(self, "Error", f"Failed to process data: {str(e)}")
+            error_msg = f"Error processing data: {str(e)}"
+            self.show_status(error_msg, 5000)
+            logger.error(error_msg)
+            QMessageBox.critical(self, "Error", error_msg)
 
     def calculate_normalized_responses(self, group_name: str, well_ids: list) -> dict:
         """Calculate normalized responses for a group of wells"""
