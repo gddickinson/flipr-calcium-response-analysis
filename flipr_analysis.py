@@ -897,12 +897,14 @@ class WellPlateLabeler(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to export results: {str(e)}")
 
     def create_summary_sheet(self, wb):
-        """Create summary sheet with statistics, concentrations, and metadata"""
+        """Create summary sheet with statistics, concentrations, and baseline values"""
         ws = wb.create_sheet("Summary")
 
-        # Add headers - including agonist and cell ID
+        # Add headers - including raw baseline stats
         headers = [
             "Group", "Agonist", "Cell ID", "Concentration (µM)", "Wells",
+            "Raw Baseline (mean)", "Raw Baseline (SEM)",
+            "Baseline ΔF/F₀ (mean)", "Baseline ΔF/F₀ (SEM)",
             "Peak ΔF/F₀ (mean)", "Peak ΔF/F₀ (SEM)",
             "Time to Peak (s)", "Time to Peak SEM",
             "AUC (mean)", "AUC (SEM)"
@@ -920,11 +922,22 @@ class WellPlateLabeler(QMainWindow):
 
         for group_name, well_ids in grouped_data.items():
             group_data = self.dff_data.loc[well_ids]
+            raw_group_data = self.raw_data.loc[well_ids]
 
             # Calculate statistics
             peaks = group_data.max(axis=1)
             peak_times = group_data.idxmax(axis=1).astype(float)
             group_auc = self.auc_data[well_ids]
+
+            # Calculate baseline values
+            baseline_data = group_data.iloc[:, :self.analysis_params['baseline_frames']].mean(axis=1)
+            baseline_mean = baseline_data.mean()
+            baseline_sem = baseline_data.std() / np.sqrt(len(baseline_data))
+
+            # Calculate raw baseline values
+            raw_baseline_data = raw_group_data.iloc[:, :self.analysis_params['baseline_frames']].mean(axis=1)
+            raw_baseline_mean = raw_baseline_data.mean()
+            raw_baseline_sem = raw_baseline_data.std() / np.sqrt(len(raw_baseline_data))
 
             # Extract metadata from group name
             agonist = ""
@@ -932,35 +945,37 @@ class WellPlateLabeler(QMainWindow):
             concentration = ""
             if "|" in group_name:
                 parts = [part.strip() for part in group_name.split("|")]
-                # First part is typically the agonist name
                 if parts:
                     agonist = parts[0]
-                # Look for concentration and cell ID in remaining parts
                 for part in parts[1:]:
                     if "µM" in part:
                         concentration = part.replace(" µM", "")
-                    elif not cell_id:  # Assume any non-concentration part is cell ID
+                    elif not cell_id:
                         cell_id = part
 
-            # Write data to cells
+            # Write data to cells with rounding
             current_col = 1
             ws.cell(row=row, column=current_col, value=group_name); current_col += 1
             ws.cell(row=row, column=current_col, value=agonist); current_col += 1
             ws.cell(row=row, column=current_col, value=cell_id); current_col += 1
             ws.cell(row=row, column=current_col, value=concentration); current_col += 1
             ws.cell(row=row, column=current_col, value=len(well_ids)); current_col += 1
-            ws.cell(row=row, column=current_col, value=float(peaks.mean())); current_col += 1
-            ws.cell(row=row, column=current_col, value=float(peaks.std() / np.sqrt(len(peaks)))); current_col += 1
-            ws.cell(row=row, column=current_col, value=float(peak_times.mean())); current_col += 1
-            ws.cell(row=row, column=current_col, value=float(peak_times.std() / np.sqrt(len(peak_times)))); current_col += 1
-            ws.cell(row=row, column=current_col, value=float(group_auc.mean())); current_col += 1
-            ws.cell(row=row, column=current_col, value=float(group_auc.std() / np.sqrt(len(group_auc)))); current_col += 1
+            ws.cell(row=row, column=current_col, value=round(float(raw_baseline_mean), 3)); current_col += 1
+            ws.cell(row=row, column=current_col, value=round(float(raw_baseline_sem), 3)); current_col += 1
+            ws.cell(row=row, column=current_col, value=round(float(baseline_mean), 3)); current_col += 1
+            ws.cell(row=row, column=current_col, value=round(float(baseline_sem), 3)); current_col += 1
+            ws.cell(row=row, column=current_col, value=round(float(peaks.mean()), 3)); current_col += 1
+            ws.cell(row=row, column=current_col, value=round(float(peaks.std() / np.sqrt(len(peaks))), 3)); current_col += 1
+            ws.cell(row=row, column=current_col, value=round(float(peak_times.mean()), 3)); current_col += 1
+            ws.cell(row=row, column=current_col, value=round(float(peak_times.std() / np.sqrt(len(peak_times))), 3)); current_col += 1
+            ws.cell(row=row, column=current_col, value=round(float(group_auc.mean()), 3)); current_col += 1
+            ws.cell(row=row, column=current_col, value=round(float(group_auc.std() / np.sqrt(len(group_auc))), 3)); current_col += 1
 
             if self.normalize_to_ionomycin:
                 normalized_data = self.calculate_normalized_responses(group_name, well_ids)
                 if normalized_data:
-                    ws.cell(row=row, column=current_col, value=normalized_data['mean']); current_col += 1
-                    ws.cell(row=row, column=current_col, value=normalized_data['sem'])
+                    ws.cell(row=row, column=current_col, value=round(normalized_data['mean'], 3)); current_col += 1
+                    ws.cell(row=row, column=current_col, value=round(normalized_data['sem'], 3))
 
             row += 1
 
@@ -976,6 +991,8 @@ class WellPlateLabeler(QMainWindow):
                     pass
             adjusted_width = (max_length + 2)
             ws.column_dimensions[column[0].column_letter].width = adjusted_width
+
+
 
     def create_traces_sheet(self, wb, sheet_name, data):
         """Create sheet with trace data including concentrations"""
@@ -1044,16 +1061,18 @@ class WellPlateLabeler(QMainWindow):
             row += 1
 
     def create_peak_responses_sheet(self, wb):
-        """Create sheet with peak responses including concentrations"""
+        """Create sheet with peak responses including raw and normalized baselines"""
         ws = wb.create_sheet("Peak_Responses")
 
         # Add headers
         headers = [
             "Group", "Well ID", "Concentration (µM)",
-            "Peak ΔF/F₀", "Time to Peak (s)", "AUC"
+            "Raw Baseline", "Baseline ΔF/F₀", "Peak ΔF/F₀",
+            "Time to Peak (s)", "AUC"
         ]
         for col, header in enumerate(headers, 1):
-            ws.cell(row=1, column=col, value=header)
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = Font(bold=True)
 
         # Add data
         row = 2
@@ -1065,18 +1084,40 @@ class WellPlateLabeler(QMainWindow):
                 well_idx = next(idx for idx in range(96) if self.well_data[idx]["well_id"] == well_id)
                 concentration = self.well_data[well_idx].get("concentration", "").replace(" µM", "")
 
+                # Get trace data
                 trace = self.dff_data.loc[well_id]
+                raw_trace = self.raw_data.loc[well_id]
+
+                # Calculate values
+                raw_baseline = raw_trace.iloc[:self.analysis_params['baseline_frames']].mean()
+                baseline = trace.iloc[:self.analysis_params['baseline_frames']].mean()
                 peak = trace.max()
                 peak_time = float(trace.idxmax())
                 auc = self.auc_data[well_id]
 
+                # Write data with rounding
                 ws.cell(row=row, column=1, value=group_name)
                 ws.cell(row=row, column=2, value=well_id)
                 ws.cell(row=row, column=3, value=concentration)
-                ws.cell(row=row, column=4, value=float(peak))
-                ws.cell(row=row, column=5, value=float(peak_time))
-                ws.cell(row=row, column=6, value=float(auc))
+                ws.cell(row=row, column=4, value=round(float(raw_baseline), 3))
+                ws.cell(row=row, column=5, value=round(float(baseline), 3))
+                ws.cell(row=row, column=6, value=round(float(peak), 3))
+                ws.cell(row=row, column=7, value=round(peak_time, 3))
+                ws.cell(row=row, column=8, value=round(float(auc), 3))
                 row += 1
+
+        # Auto-adjust column widths
+        for column in ws.columns:
+            max_length = 0
+            column = list(column)
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = (max_length + 2)
+            ws.column_dimensions[column[0].column_letter].width = adjusted_width
 
     def create_normalized_sheet(self, wb):
         """Create sheet with ionomycin-normalized data including concentrations"""
