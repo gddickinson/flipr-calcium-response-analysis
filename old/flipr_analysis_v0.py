@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QColorDialog, QComboBox,
     QMessageBox, QFileDialog, QCheckBox, QTabWidget,
     QMenuBar, QMenu, QAction, QDialog, QSpinBox, QFormLayout, QDialogButtonBox,
-    QGroupBox, QScrollArea, QTextEdit, QSizePolicy
+    QGroupBox, QScrollArea, QTextEdit
 )
 from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtCore import Qt, QTimer
@@ -372,53 +372,14 @@ class PeakAnalyzer:
             return times[falling[0]] - times[rising[0]]
         return None
 
-class DraggableWellButton(QPushButton):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.main_window = parent
-        self.setMouseTracking(True)
-        # Make sure button stays square
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)  # Changed to Fixed
-        self.setMinimumSize(90, 90)  # Set minimum size
-
-    def resizeEvent(self, event):
-        """Keep the button square by using the minimum of width and height"""
-        super().resizeEvent(event)
-        size = min(self.width(), self.height())
-        self.setFixedSize(size, size)
-
-    def mousePressEvent(self, event):
-        """Handle mouse press for selection"""
-        if event.button() == Qt.LeftButton:
-            well_index = self.property("well_index")
-            if well_index is not None:
-                self.main_window.toggle_well_selection(int(well_index))
-
-    def enterEvent(self, event):
-        """Handle mouse enter for shift-selection"""
-        modifiers = QApplication.keyboardModifiers()
-        if modifiers == Qt.ShiftModifier:
-            well_index = self.property("well_index")
-            print(f"\nShift + Mouse Enter on Well {well_index}")
-            current_index = int(well_index)
-
-            if hasattr(self.main_window, 'last_selected') and self.main_window.last_selected is not None:
-                self.main_window.add_rectangle_to_selection(self.main_window.last_selected, current_index)
-
-
-
 class WellPlateLabeler(QMainWindow):
     """Main application window"""
     def __init__(self):
         super().__init__()
         self.setWindowTitle("FLIPR Analysis")
 
-        self.last_selected = None
-
-        self.font_size = 11  # Default font size
-
         # Set window size and font
-        self.resize(800, 600)
+        self.resize(1000, 800)
         self.default_font = QFont()
         self.default_font.setPointSize(12)
         QApplication.setFont(self.default_font)
@@ -468,8 +429,6 @@ class WellPlateLabeler(QMainWindow):
         self.setup_analysis_tab()
         self.create_menus()
 
-
-
     def init_data(self):
         """Initialize all data attributes"""
         self.analysis_params = {
@@ -514,16 +473,6 @@ class WellPlateLabeler(QMainWindow):
             'wells': set(),  # Track individually selected wells
             'all_selected': False  # Track if all wells are selected
         }
-
-    def clear_selection_state(self):
-        """Reset all selection states"""
-        self.selection_state = {
-            'rows': set(),
-            'cols': set(),
-            'wells': set(),
-            'all_selected': False
-        }
-        self.last_selected = None
 
     def create_compact_input_fields(self):
         """Create more compact input fields layout"""
@@ -578,6 +527,47 @@ class WellPlateLabeler(QMainWindow):
             QTimer.singleShot(duration, lambda: self.status_display.setText("Ready"))
 
 
+    def update_selection_state(self):
+        """Update the selection state based on current selections"""
+        try:
+            # Create a new set for selected wells
+            selected = set()
+
+            # Add wells from rows
+            for row in self.selection_state['rows']:
+                selected.update(range(row * 12, (row + 1) * 12))
+
+            # Add wells from columns
+            for col in self.selection_state['cols']:
+                selected.update(range(col, 96, 12))
+
+            # Add individual wells
+            selected.update(self.selection_state['wells'])
+
+            # If all wells are selected, override everything
+            if self.selection_state['all_selected']:
+                selected = set(range(96))
+
+            # Update the selected_wells set
+            self.selected_wells = selected
+
+            # Update visual appearance of wells
+            for idx in range(96):
+                is_selected = idx in self.selected_wells
+                color = 'lightblue' if is_selected else self.well_data[idx]['color']
+                self.wells[idx].setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {color};
+                        padding: 2px;
+                        font-size: 12pt;
+                        color: black;
+                    }}
+                """)
+
+        except Exception as e:
+            logger.error(f"Error updating selection state: {str(e)}")
+            QMessageBox.warning(self, "Error",
+                              "Failed to update well selection. See log for details.")
 
 
     def create_compact_action_buttons(self):
@@ -604,10 +594,9 @@ class WellPlateLabeler(QMainWindow):
         return action_layout
 
     def create_compact_well_plate_grid(self):
-        """Create well grid with larger buttons"""
         plate_widget = QWidget()
         plate_layout = QGridLayout()
-        plate_layout.setSpacing(2)
+        plate_layout.setSpacing(1)
 
         rows = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
         cols = range(1, 13)
@@ -619,44 +608,39 @@ class WellPlateLabeler(QMainWindow):
             QPushButton {
                 background-color: lightgray;
                 padding: 2px;
-                min-width: 30px;
-                min-height: 30px;
-                font-size: 10pt;
+                max-width: 40px;
+                max-height: 40px;
             }
         """)
-        select_all_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         select_all_btn.clicked.connect(self.toggle_all_selection)
         plate_layout.addWidget(select_all_btn, 0, 0)
 
-        # Column headers - wide but short
+        # Column headers
         for j, col in enumerate(cols):
             col_btn = QPushButton(str(col))
             col_btn.setStyleSheet("""
                 QPushButton {
                     background-color: lightgray;
                     padding: 2px;
-                    min-width: 90px;
-                    min-height: 30px;
-                    font-size: 10pt;
+                    max-width: 40px;
+                    max-height: 40px;
                 }
             """)
-            col_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             col_btn.clicked.connect(lambda checked, col=j: self.toggle_column_selection(col))
             plate_layout.addWidget(col_btn, 0, j + 1)
 
-        # Row headers - narrow but tall
+        # Row headers and wells
         for i, row in enumerate(rows):
+            # Row header
             row_btn = QPushButton(row)
             row_btn.setStyleSheet("""
                 QPushButton {
                     background-color: lightgray;
                     padding: 2px;
-                    min-width: 30px;
-                    min-height: 90px;
-                    font-size: 10pt;
+                    max-width: 40px;
+                    max-height: 40px;
                 }
             """)
-            row_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             row_btn.clicked.connect(lambda checked, row=i: self.toggle_row_selection(row))
             plate_layout.addWidget(row_btn, i + 1, 0)
 
@@ -664,36 +648,24 @@ class WellPlateLabeler(QMainWindow):
             for j, col in enumerate(cols):
                 well_index = i * 12 + j
                 well_id = f"{row}{col}"
-                button = DraggableWellButton(self)
-                button.setProperty("well_index", well_index)
-                button.setStyleSheet(f"""
-                    QPushButton {{
+                button = QPushButton()
+                button.setMinimumSize(40, 40)
+                button.setMaximumSize(80, 80)
+                button.setStyleSheet("""
+                    QPushButton {
                         background-color: white;
                         padding: 2px;
-                        min-width: 90px;
-                        min-height: 90px;
-                        font-size: {self.font_size}pt;
-                        text-align: center;
-                    }}
+                        font-size: 12pt;
+                    }
                 """)
+                button.clicked.connect(lambda checked, idx=well_index: self.toggle_well_selection(idx))
                 self.wells.append(button)
                 self.well_data[well_index]["well_id"] = well_id
                 self.update_well_button_text(well_index)
                 plate_layout.addWidget(button, i + 1, j + 1)
 
-        # Remove stretch factors - we don't want anything to stretch
-        for i in range(13):
-            plate_layout.setColumnStretch(i, 0)
-        for i in range(9):
-            plate_layout.setRowStretch(i, 0)
-
-        # Add spacer items to center the grid
-        plate_layout.setRowStretch(9, 1)
-        plate_layout.setColumnStretch(13, 1)
-
         plate_widget.setLayout(plate_layout)
         return plate_widget
-
 
     def update_well_appearances(self):
         """Update the visual appearance of all wells based on selection state"""
@@ -713,33 +685,28 @@ class WellPlateLabeler(QMainWindow):
             """)
 
     def update_well_button_text(self, index):
-        """Update well button text with better formatting"""
+        """Update well button text in a compact format"""
         data = self.well_data[index]
         well_id = data["well_id"]
 
-        # Create multi-line text with proper spacing
+        # Create compact multi-line text
         text_parts = [well_id]
         if data["label"]:
             text_parts.append(data["label"])
         if data["concentration"]:
+            # Shorten concentration display
             conc = data["concentration"].replace(" µM", "µ")
             text_parts.append(conc)
         if data["sample_id"]:
             text_parts.append(data["sample_id"])
 
-        button_text = "\n".join(text_parts)
-
-        # Update button text and style
-        self.wells[index].setText(button_text)
+        self.wells[index].setText("\n".join(text_parts))
         self.wells[index].setStyleSheet(f"""
             QPushButton {{
                 background-color: {data['color']};
-                padding: 5px;
-                min-width: 80px;
-                min-height: 80px;
+                padding: 2px;
                 font-size: 12pt;
                 text-align: center;
-                qproperty-alignment: AlignCenter;
             }}
         """)
 
@@ -752,197 +719,52 @@ class WellPlateLabeler(QMainWindow):
 
 
     def setup_plate_tab(self):
-        """Set up the plate layout tab with side panel and larger grid"""
+        """Set up the plate layout tab with scrollable area"""
         plate_tab = QWidget()
-        plate_layout = QHBoxLayout()  # Change to horizontal layout
-        plate_layout.setSpacing(10)
+        plate_layout = QVBoxLayout()
+        plate_layout.setSpacing(2)  # Reduce spacing between elements
 
-        # Create left sidebar for controls
-        sidebar = self.create_sidebar_controls()
-        plate_layout.addWidget(sidebar)
+        # Create scrollable area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setSpacing(2)
 
-        # Create main panel with just the grid
-        main_panel = self.create_main_panel()
-        plate_layout.addWidget(main_panel)
+        # Add controls group with more compact layout
+        controls_group = QGroupBox("Plate Controls")
+        controls_layout = QVBoxLayout()
+        controls_layout.setSpacing(2)
+        controls_layout.setContentsMargins(5, 5, 5, 5)
 
-        # Set stretch factors to give more space to the grid
-        plate_layout.setStretchFactor(sidebar, 0)  # Don't stretch sidebar
-        plate_layout.setStretchFactor(main_panel, 1)  # Allow main panel to stretch
-
-        plate_tab.setLayout(plate_layout)
-        self.tab_widget.addTab(plate_tab, "Plate Layout")
-
-
-    def create_sidebar_controls(self):
-        """Create vertical sidebar with controls"""
-        sidebar = QWidget()
-        sidebar.setMinimumWidth(200)  # Smaller minimum width
-        sidebar.setMaximumWidth(250)  # Smaller maximum width
-        sidebar_layout = QVBoxLayout()
-        sidebar_layout.setSpacing(5)  # Reduced spacing
-
-        # Add title
-        title = QLabel("Plate Controls")
-        title.setStyleSheet("font-size: 12pt; font-weight: bold;")
-        sidebar_layout.addWidget(title)
-
-        # Mode selection
-        mode_group = QGroupBox("Selection Mode")
-        mode_layout = QVBoxLayout()
-        mode_layout.setSpacing(2)  # Reduced spacing
+        # Mode selection (more compact)
+        mode_layout = QHBoxLayout()
+        mode_layout.setSpacing(2)
         self.mode_selector = QComboBox()
         self.mode_selector.addItems(["Simple Label", "Log10 Series", "Clear Wells"])
+        mode_layout.addWidget(QLabel("Mode:"))
         mode_layout.addWidget(self.mode_selector)
-        mode_group.setLayout(mode_layout)
-        sidebar_layout.addWidget(mode_group)
+        mode_layout.addStretch()
+        controls_layout.addLayout(mode_layout)
 
-        # Well properties inputs
-        props_group = QGroupBox("Well Properties")
-        props_layout = QGridLayout()
-        props_layout.setSpacing(2)  # Reduced spacing
+        # Compact input fields
+        input_group = self.create_compact_input_fields()
+        controls_layout.addWidget(input_group)
 
-        # Make input fields smaller
-        input_height = 25  # Reduced height for input fields
+        # Action buttons in two rows to save vertical space
+        action_layout = self.create_compact_action_buttons()
+        controls_layout.addLayout(action_layout)
 
-        # Label input
-        props_layout.addWidget(QLabel("Agonist:"), 0, 0)
-        self.label_input = QLineEdit()
-        self.label_input.setFixedHeight(input_height)
-        props_layout.addWidget(self.label_input, 0, 1)
-        self.label_checkbox = QCheckBox()
-        self.label_checkbox.setChecked(True)
-        props_layout.addWidget(self.label_checkbox, 0, 2)
-
-        # Concentration input
-        props_layout.addWidget(QLabel("Conc (µM):"), 1, 0)
-        self.starting_conc_input = QLineEdit()
-        self.starting_conc_input.setFixedHeight(input_height)
-        props_layout.addWidget(self.starting_conc_input, 1, 1)
-        self.concentration_checkbox = QCheckBox()
-        self.concentration_checkbox.setChecked(True)
-        props_layout.addWidget(self.concentration_checkbox, 1, 2)
-
-        # Sample ID input
-        props_layout.addWidget(QLabel("Sample ID:"), 2, 0)
-        self.sample_id_input = QLineEdit()
-        self.sample_id_input.setFixedHeight(input_height)
-        props_layout.addWidget(self.sample_id_input, 2, 1)
-        self.sample_id_checkbox = QCheckBox()
-        self.sample_id_checkbox.setChecked(True)
-        props_layout.addWidget(self.sample_id_checkbox, 2, 2)
-
-        # Color selection
-        props_layout.addWidget(QLabel("Color:"), 3, 0)
-        color_layout = QHBoxLayout()
-        self.color_button = QPushButton()
-        self.color_button.setFixedHeight(input_height)
-        self.color_button.setMaximumWidth(50)
-        self.color_button.clicked.connect(self.select_color)
-        color_layout.addWidget(self.color_button)
-        self.color_checkbox = QCheckBox()
-        self.color_checkbox.setChecked(True)
-        color_layout.addWidget(self.color_checkbox)
-        props_layout.addLayout(color_layout, 3, 1, 1, 2)
-
-        props_group.setLayout(props_layout)
-        sidebar_layout.addWidget(props_group)
-
-        # Action buttons
-        actions_group = QGroupBox("Actions")
-        actions_layout = QVBoxLayout()
-        actions_layout.setSpacing(2)  # Reduced spacing
-
-        buttons = [
-            ("Apply Label", self.apply_label),
-            ("Clear Selection", self.clear_selection),
-            ("Save Layout", self.save_layout),
-            ("Load Layout", self.load_layout),
-            ("Load Data", self.open_file_dialog)
-        ]
-
-        for text, callback in buttons:
-            btn = QPushButton(text)
-            btn.clicked.connect(callback)
-            btn.setFixedHeight(30)  # Smaller button height
-            actions_layout.addWidget(btn)
-
-        actions_group.setLayout(actions_layout)
-        sidebar_layout.addWidget(actions_group)
-
-        # Add font size control group
-        font_group = QGroupBox("Button Text Size")
-        font_layout = QHBoxLayout()
-
-        # Add spinbox for font size
-        self.font_size_spin = QSpinBox()
-        self.font_size_spin.setRange(6, 20)  # Reasonable font size range
-        self.font_size_spin.setValue(self.font_size)
-        self.font_size_spin.setSuffix("pt")
-        self.font_size_spin.valueChanged.connect(self.update_font_size)
-
-        # Add label
-        font_layout.addWidget(QLabel("Font Size:"))
-        font_layout.addWidget(self.font_size_spin)
-
-        font_group.setLayout(font_layout)
-        sidebar_layout.addWidget(font_group)
-
-        # Add stretch at the bottom
-        sidebar_layout.addStretch()
-
-        sidebar.setLayout(sidebar_layout)
-        return sidebar
-
-    def update_font_size(self, new_size):
-        """Update font size for all well buttons"""
-        self.font_size = new_size
-        # Update all well buttons
-        for i in range(len(self.wells)):
-            self.update_well_button_text(i)
-
-    def update_well_button_text(self, index):
-        """Update well button text with dynamic font size"""
-        data = self.well_data[index]
-        well_id = data["well_id"]
-
-        # Create multi-line text with proper spacing
-        text_parts = [well_id]
-        if data["label"]:
-            text_parts.append(data["label"])
-        if data["concentration"]:
-            conc = data["concentration"].replace(" µM", "µ")
-            text_parts.append(conc)
-        if data["sample_id"]:
-            text_parts.append(data["sample_id"])
-
-        button_text = "\n".join(text_parts)
-
-        # Update button text and style with dynamic font size
-        self.wells[index].setText(button_text)
-        self.wells[index].setStyleSheet(f"""
-            QPushButton {{
-                background-color: {data['color']};
-                padding: 2px;
-                min-width: 90px;
-                min-height: 90px;
-                font-size: {self.font_size}pt;
-                text-align: center;
-                qproperty-alignment: AlignCenter;
-            }}
-        """)
-
-    def create_main_panel(self):
-        """Create main panel with just the well grid"""
-        main_panel = QWidget()
-        main_layout = QVBoxLayout()
-        main_layout.setSpacing(2)
+        controls_group.setLayout(controls_layout)
+        scroll_layout.addWidget(controls_group)
 
         # Add well plate grid
-        grid = self.create_compact_well_plate_grid()
-        main_layout.addWidget(grid)
+        scroll_layout.addWidget(self.create_compact_well_plate_grid())
 
-        main_panel.setLayout(main_layout)
-        return main_panel
+        scroll.setWidget(scroll_content)
+        plate_layout.addWidget(scroll)
+        plate_tab.setLayout(plate_layout)
+        self.tab_widget.addTab(plate_tab, "Plate Layout")
 
     def setup_analysis_tab(self):
         """Set up the analysis tab"""
@@ -2169,202 +1991,113 @@ class WellPlateLabeler(QMainWindow):
             logger.debug("Stack trace:", exc_info=True)
             raise
 
-    def get_row_col(self, index):
-        """Convert well index to row and column"""
-        row = index // 12  # 12 columns per row
-        col = index % 12
-        return row, col
-
-    def get_index(self, row, col):
-        """Convert row and column to well index"""
-        if 0 <= row < 8 and 0 <= col < 12:  # Check bounds
-            return row * 12 + col
-        return None
-
-    def select_rectangle(self, start_index, end_index):
-        """Select all wells within the rectangle defined by start and end indices"""
-        # Get corners of the rectangle
-        start_row, start_col = self.get_row_col(start_index)
-        end_row, end_col = self.get_row_col(end_index)
-
-        # Determine rectangle bounds
-        min_row = min(start_row, end_row)
-        max_row = max(start_row, end_row)
-        min_col = min(start_col, end_col)
-        max_col = max(start_col, end_col)
-
-        print(f"Selecting rectangle from ({min_row}, {min_col}) to ({max_row}, {max_col})")
-
-        # Clear previous selection if not in wells mode
-        if not self.selection_state['wells']:
-            self.selection_state['wells'] = set()
-
-        # Select all wells within the rectangle
-        for row in range(min_row, max_row + 1):
-            for col in range(min_col, max_col + 1):
-                idx = self.get_index(row, col)
-                if idx is not None:
-                    self.selection_state['wells'].add(idx)
-
-        # Update display
-        self.update_selection_state()
-        self.update_well_appearances()
-
     def toggle_well_selection(self, index):
-        """Handle individual well selection"""
-        modifiers = QApplication.keyboardModifiers()
-        previously_selected = set(self.selected_wells)
+        """Toggle individual well selection and update plots"""
+        try:
+            previously_selected = set(self.selected_wells)
 
-        if modifiers == Qt.ShiftModifier:
-            # For shift selection, add rectangle to existing selection
-            if self.last_selected is not None:
-                self.add_rectangle_to_selection(self.last_selected, index)
-            self.last_selected = index
-        else:
-            # Toggle individual well
-            if index in self.selection_state['wells']:
+            # Calculate which row and column this well belongs to
+            row = index // 12
+            col = index % 12
+
+            # If well is selected through row selection, convert row to individual selections
+            if row in self.selection_state['rows']:
+                logger.debug(f"Converting row {row} selection to individual wells")
+                self.selection_state['rows'].remove(row)
+                # Add all wells in this row except the clicked one to individual selections
+                for col_idx in range(12):
+                    well_idx = row * 12 + col_idx
+                    if well_idx != index:
+                        self.selection_state['wells'].add(well_idx)
+
+            # If well is selected through column selection, convert column to individual selections
+            if col in self.selection_state['cols']:
+                logger.debug(f"Converting column {col} selection to individual wells")
+                self.selection_state['cols'].remove(col)
+                # Add all wells in this column except the clicked one to individual selections
+                for row_idx in range(8):
+                    well_idx = row_idx * 12 + col
+                    if well_idx != index:
+                        self.selection_state['wells'].add(well_idx)
+
+            # If all wells are selected, convert to individual selections minus this one
+            if self.selection_state['all_selected']:
+                logger.debug("Converting 'all selected' to individual well selections")
+                self.selection_state['all_selected'] = False
+                self.selection_state['wells'] = set(range(96))
                 self.selection_state['wells'].remove(index)
+            # Normal individual well toggle
             else:
-                # Convert any row/column selections to individual wells first
-                if self.selection_state['rows'] or self.selection_state['cols']:
-                    self.convert_to_well_selection()
-                self.selection_state['wells'].add(index)
-            self.last_selected = index
+                if index in self.selection_state['wells']:
+                    self.selection_state['wells'].remove(index)
+                else:
+                    self.selection_state['wells'].add(index)
 
-        self.update_selection_state()
-        self.update_well_appearances()
-        self.update_traces_for_selection_change(previously_selected)
+            self.update_selection_state()
+            self.update_well_appearances()
+            self.update_traces_for_selection_change(previously_selected)
 
-    def convert_to_well_selection(self):
-        """Convert row/column selections to individual well selections"""
-        # Add wells from rows
-        for row in self.selection_state['rows']:
-            self.selection_state['wells'].update(range(row * 12, (row + 1) * 12))
-
-        # Add wells from columns
-        for col in self.selection_state['cols']:
-            self.selection_state['wells'].update(range(col, 96, 12))
-
-        # Clear row and column selections
-        self.selection_state['rows'] = set()
-        self.selection_state['cols'] = set()
-
-    def add_rectangle_to_selection(self, start_index, end_index):
-        """Add wells within rectangle to selection without clearing existing selection"""
-        # Convert any row/column selections to individual wells first
-        self.convert_to_well_selection()
-
-        # Get corners of the rectangle
-        start_row, start_col = self.get_row_col(start_index)
-        end_row, end_col = self.get_row_col(end_index)
-
-        # Determine rectangle bounds
-        min_row = min(start_row, end_row)
-        max_row = max(start_row, end_row)
-        min_col = min(start_col, end_col)
-        max_col = max(start_col, end_col)
-
-        print(f"Adding rectangle from ({min_row}, {min_col}) to ({max_row}, {max_col})")
-
-        # Add all wells within the rectangle to selection
-        for row in range(min_row, max_row + 1):
-            for col in range(min_col, max_col + 1):
-                idx = self.get_index(row, col)
-                if idx is not None:
-                    self.selection_state['wells'].add(idx)
+        except Exception as e:
+            logger.error(f"Error in toggle_well_selection: {str(e)}")
+            logger.debug("Stack trace:", exc_info=True)
 
     def toggle_row_selection(self, row_index):
-        """Toggle row selection"""
+        """Toggle row selection and update plots"""
         previously_selected = set(self.selected_wells)
 
-        # Convert existing row/column selections to individual wells
-        self.convert_to_well_selection()
-
-        # Toggle all wells in this row
-        row_wells = set(range(row_index * 12, (row_index + 1) * 12))
-        if row_wells.issubset(self.selection_state['wells']):
-            # If all wells in row are selected, remove them
-            self.selection_state['wells'] -= row_wells
+        # If all wells are selected, switch to row selection mode
+        if self.selection_state['all_selected']:
+            self.selection_state['all_selected'] = False
+            # Select all rows except the clicked one
+            self.selection_state['rows'] = set(range(8))
+            self.selection_state['rows'].remove(row_index)
         else:
-            # Otherwise add them
-            self.selection_state['wells'].update(row_wells)
+            if row_index in self.selection_state['rows']:
+                self.selection_state['rows'].remove(row_index)
+            else:
+                self.selection_state['rows'].add(row_index)
 
         self.update_selection_state()
         self.update_well_appearances()
         self.update_traces_for_selection_change(previously_selected)
 
     def toggle_column_selection(self, col_index):
-        """Toggle column selection"""
+        """Toggle column selection and update plots"""
         previously_selected = set(self.selected_wells)
 
-        # Convert existing row/column selections to individual wells
-        self.convert_to_well_selection()
-
-        # Toggle all wells in this column
-        col_wells = set(range(col_index, 96, 12))
-        if col_wells.issubset(self.selection_state['wells']):
-            # If all wells in column are selected, remove them
-            self.selection_state['wells'] -= col_wells
+        # If all wells are selected, switch to column selection mode
+        if self.selection_state['all_selected']:
+            self.selection_state['all_selected'] = False
+            # Select all columns except the clicked one
+            self.selection_state['cols'] = set(range(12))
+            self.selection_state['cols'].remove(col_index)
         else:
-            # Otherwise add them
-            self.selection_state['wells'].update(col_wells)
+            if col_index in self.selection_state['cols']:
+                self.selection_state['cols'].remove(col_index)
+            else:
+                self.selection_state['cols'].add(col_index)
 
         self.update_selection_state()
         self.update_well_appearances()
         self.update_traces_for_selection_change(previously_selected)
 
     def toggle_all_selection(self):
-        """Toggle selection of all wells"""
+        """Toggle selection of all wells and update plots"""
         previously_selected = set(self.selected_wells)
 
-        if len(self.selected_wells) == 96:
-            # If all wells are selected, clear selection
-            self.selection_state = {
-                'rows': set(),
-                'cols': set(),
-                'wells': set(),
-                'all_selected': False
-            }
+        # If any wells are selected, first clear all selections
+        if self.selected_wells:
+            self.selection_state['all_selected'] = False
+            self.selection_state['rows'] = set()
+            self.selection_state['cols'] = set()
+            self.selection_state['wells'] = set()
         else:
-            # Otherwise select all wells
-            self.selection_state = {
-                'rows': set(),
-                'cols': set(),
-                'wells': set(range(96)),
-                'all_selected': False
-            }
+            # If no wells are selected, select all
+            self.selection_state['all_selected'] = True
 
         self.update_selection_state()
         self.update_well_appearances()
         self.update_traces_for_selection_change(previously_selected)
-    def update_selection_state(self):
-        """Update the selected_wells set based on current selection state"""
-        try:
-            # Create a new set for selected wells
-            selected = set()
-
-            # If all wells are selected, that takes precedence
-            if self.selection_state['all_selected']:
-                selected = set(range(96))
-            else:
-                # Add wells from rows
-                for row in self.selection_state['rows']:
-                    selected.update(range(row * 12, (row + 1) * 12))
-
-                # Add wells from columns
-                for col in self.selection_state['cols']:
-                    selected.update(range(col, 96, 12))
-
-                # Add individual wells
-                selected.update(self.selection_state['wells'])
-
-            # Update the selected_wells set
-            self.selected_wells = selected
-
-        except Exception as e:
-            logger.error(f"Error updating selection state: {str(e)}")
-            QMessageBox.warning(self, "Error",
-                              "Failed to update well selection. See log for details.")
 
 
     def apply_label(self):
