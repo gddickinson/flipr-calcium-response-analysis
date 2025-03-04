@@ -25,12 +25,6 @@ import re
 from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
 
-# Matplotlib imports
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
-from matplotlib.figure import Figure
-
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -172,453 +166,9 @@ class DFFPlotWindow(BasePlotWindow):
         self.plot_widget.setLabel('left', "Intensity (ΔF/F₀)")
 
 
-class PlotSettingsTab(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.parent = parent
-        self.setup_ui()
-
-    def setup_ui(self):
-        # Main layout
-        main_layout = QVBoxLayout(self)
-
-        # Plot selector
-        plot_selector_group = QGroupBox("Select Plot")
-        plot_selector_layout = QVBoxLayout()
-        self.plot_selector = QComboBox()
-        self.plot_selector.addItems([
-            "Individual Traces",
-            "Mean Traces",
-            "Peak Responses",
-            "Area Under Curve",
-            "Time to Peak",
-            "Normalized to Ionomycin"
-        ])
-        self.plot_selector.currentIndexChanged.connect(self.update_settings_display)
-        plot_selector_layout.addWidget(self.plot_selector)
-        plot_selector_group.setLayout(plot_selector_layout)
-
-        # Settings group
-        settings_group = QGroupBox("Axis Settings")
-        settings_layout = QFormLayout()
-
-        # X-axis label settings
-        x_axis_group = QGroupBox("X-Axis Label")
-        x_axis_layout = QFormLayout()
-
-        self.x_label_text = QLineEdit()
-        self.x_label_size = QSpinBox()
-        self.x_label_size.setRange(6, 24)
-        self.x_label_size.setValue(10)
-
-        self.x_tick_size = QSpinBox()
-        self.x_tick_size.setRange(6, 18)
-        self.x_tick_size.setValue(8)
-
-        self.x_rotation = QSpinBox()
-        self.x_rotation.setRange(0, 90)
-        self.x_rotation.setValue(0)
-
-        self.x_color = QPushButton("Select Color")
-        self.x_color.clicked.connect(lambda: self.select_color('x_label'))
-        self.x_color.setStyleSheet("background-color: black; color: white;")
-
-        x_axis_layout.addRow("Label:", self.x_label_text)
-        x_axis_layout.addRow("Label Size:", self.x_label_size)
-        x_axis_layout.addRow("Tick Size:", self.x_tick_size)
-        x_axis_layout.addRow("Rotation:", self.x_rotation)
-        x_axis_layout.addRow("Color:", self.x_color)
-
-        x_axis_group.setLayout(x_axis_layout)
-
-        # Y-axis label settings
-        y_axis_group = QGroupBox("Y-Axis Label")
-        y_axis_layout = QFormLayout()
-
-        self.y_label_text = QLineEdit()
-        self.y_label_size = QSpinBox()
-        self.y_label_size.setRange(6, 24)
-        self.y_label_size.setValue(10)
-
-        self.y_tick_size = QSpinBox()
-        self.y_tick_size.setRange(6, 18)
-        self.y_tick_size.setValue(8)
-
-        self.y_rotation = QSpinBox()
-        self.y_rotation.setRange(0, 90)
-        self.y_rotation.setValue(90)
-
-        self.y_color = QPushButton("Select Color")
-        self.y_color.clicked.connect(lambda: self.select_color('y_label'))
-        self.y_color.setStyleSheet("background-color: black; color: white;")
-
-        y_axis_layout.addRow("Label:", self.y_label_text)
-        y_axis_layout.addRow("Label Size:", self.y_label_size)
-        y_axis_layout.addRow("Tick Size:", self.y_tick_size)
-        y_axis_layout.addRow("Rotation:", self.y_rotation)
-        y_axis_layout.addRow("Color:", self.y_color)
-
-        y_axis_group.setLayout(y_axis_layout)
-
-        # Add to settings layout
-        settings_layout.addWidget(x_axis_group)
-        settings_layout.addWidget(y_axis_group)
-
-        # Action buttons
-        button_layout = QHBoxLayout()
-
-        self.apply_button = QPushButton("Apply to Current Plot")
-        self.apply_button.clicked.connect(self.apply_settings)
-
-        self.apply_all_button = QPushButton("Apply to All Plots")
-        self.apply_all_button.clicked.connect(self.apply_settings_to_all)
-
-        self.reset_button = QPushButton("Reset to Defaults")
-        self.reset_button.clicked.connect(self.reset_to_defaults)
-
-        button_layout.addWidget(self.apply_button)
-        button_layout.addWidget(self.apply_all_button)
-        button_layout.addWidget(self.reset_button)
-
-        settings_group.setLayout(settings_layout)
-
-        # Add all widgets to main layout
-        main_layout.addWidget(plot_selector_group)
-        main_layout.addWidget(settings_group)
-        main_layout.addLayout(button_layout)
-        main_layout.addStretch()
-
-        # Initialize settings dictionary for each plot
-        self.plot_settings = {
-            "Individual Traces": {
-                "x_label": "Time (s)",
-                "y_label": "ΔF/F₀",
-                "x_label_size": 10,
-                "y_label_size": 10,
-                "x_tick_size": 8,
-                "y_tick_size": 8,
-                "x_rotation": 0,
-                "y_rotation": 90,
-                "x_color": "black",
-                "y_color": "black"
-            },
-            "Mean Traces": {
-                "x_label": "Time (s)",
-                "y_label": "ΔF/F₀",
-                "x_label_size": 10,
-                "y_label_size": 10,
-                "x_tick_size": 8,
-                "y_tick_size": 8,
-                "x_rotation": 0,
-                "y_rotation": 90,
-                "x_color": "black",
-                "y_color": "black"
-            },
-            "Peak Responses": {
-                "x_label": "Group",
-                "y_label": "Peak ΔF/F₀",
-                "x_label_size": 10,
-                "y_label_size": 10,
-                "x_tick_size": 8,
-                "y_tick_size": 8,
-                "x_rotation": 45,
-                "y_rotation": 90,
-                "x_color": "black",
-                "y_color": "black"
-            },
-            "Area Under Curve": {
-                "x_label": "Group",
-                "y_label": "Area Under Curve",
-                "x_label_size": 10,
-                "y_label_size": 10,
-                "x_tick_size": 8,
-                "y_tick_size": 8,
-                "x_rotation": 45,
-                "y_rotation": 90,
-                "x_color": "black",
-                "y_color": "black"
-            },
-            "Time to Peak": {
-                "x_label": "Group",
-                "y_label": "Time to Peak (s)",
-                "x_label_size": 10,
-                "y_label_size": 10,
-                "x_tick_size": 8,
-                "y_tick_size": 8,
-                "x_rotation": 45,
-                "y_rotation": 90,
-                "x_color": "black",
-                "y_color": "black"
-            },
-            "Normalized to Ionomycin": {
-                "x_label": "Group",
-                "y_label": "Response (% Ionomycin)",
-                "x_label_size": 10,
-                "y_label_size": 10,
-                "x_tick_size": 8,
-                "y_tick_size": 8,
-                "x_rotation": 45,
-                "y_rotation": 90,
-                "x_color": "black",
-                "y_color": "black"
-            }
-        }
-
-        self.update_settings_display()
-
-    def update_settings_display(self):
-        """Update the UI with settings for the selected plot"""
-        current_plot = self.plot_selector.currentText()
-        settings = self.plot_settings[current_plot]
-
-        self.x_label_text.setText(settings["x_label"])
-        self.x_label_size.setValue(settings["x_label_size"])
-        self.x_tick_size.setValue(settings["x_tick_size"])
-        self.x_rotation.setValue(settings["x_rotation"])
-        self.x_color.setStyleSheet(f"background-color: {settings['x_color']}; color: white;")
-
-        self.y_label_text.setText(settings["y_label"])
-        self.y_label_size.setValue(settings["y_label_size"])
-        self.y_tick_size.setValue(settings["y_tick_size"])
-        self.y_rotation.setValue(settings["y_rotation"])
-        self.y_color.setStyleSheet(f"background-color: {settings['y_color']}; color: white;")
-
-    def select_color(self, axis_type):
-        """Open color dialog and set current color"""
-        color = QColorDialog.getColor()
-        if color.isValid():
-            if axis_type == 'x_label':
-                self.x_color.setStyleSheet(f"background-color: {color.name()}; color: white;")
-            else:
-                self.y_color.setStyleSheet(f"background-color: {color.name()}; color: white;")
-
-    def get_current_settings(self):
-        """Get the current settings from the UI"""
-        return {
-            "x_label": self.x_label_text.text(),
-            "y_label": self.y_label_text.text(),
-            "x_label_size": self.x_label_size.value(),
-            "y_label_size": self.y_label_size.value(),
-            "x_tick_size": self.x_tick_size.value(),
-            "y_tick_size": self.y_tick_size.value(),
-            "x_rotation": self.x_rotation.value(),
-            "y_rotation": self.y_rotation.value(),
-            "x_color": self.x_color.styleSheet().split("background-color:")[1].split(";")[0].strip(),
-            "y_color": self.y_color.styleSheet().split("background-color:")[1].split(";")[0].strip()
-        }
-
-    def apply_settings(self):
-        """Apply current settings to the selected plot"""
-        current_plot = self.plot_selector.currentText()
-        self.plot_settings[current_plot] = self.get_current_settings()
-
-        # Apply settings to the matplotlib plot
-        plot_map = {
-            "Individual Traces": self.parent.individual_plot,
-            "Mean Traces": self.parent.mean_plot,
-            "Peak Responses": self.parent.responses_plot,
-            "Area Under Curve": self.parent.auc_plot,
-            "Time to Peak": self.parent.time_to_peak_plot,
-            "Normalized to Ionomycin": self.parent.normalized_plot
-        }
-
-        plot = plot_map[current_plot]
-        settings = self.plot_settings[current_plot]
-
-        # Apply settings to the axes
-        plot.axes.set_xlabel(settings["x_label"],
-                           fontsize=settings["x_label_size"],
-                           color=settings["x_color"])
-
-        plot.axes.set_ylabel(settings["y_label"],
-                           fontsize=settings["y_label_size"],
-                           color=settings["y_color"])
-
-        # Set tick parameters
-        plot.axes.tick_params(axis='x',
-                            labelsize=settings["x_tick_size"],
-                            labelcolor=settings["x_color"],
-                            rotation=settings["x_rotation"])
-
-        plot.axes.tick_params(axis='y',
-                            labelsize=settings["y_tick_size"],
-                            labelcolor=settings["y_color"],
-                            rotation=settings["y_rotation"])
-
-        plot.draw()
-
-        # Display a status message
-        QMessageBox.information(self, "Settings Applied", f"Settings applied to {current_plot} plot")
-
-    def apply_settings_to_all(self):
-        """Apply current settings to all plots"""
-        settings = self.get_current_settings()
-
-        # Update settings for all plots
-        for plot_name in self.plot_settings:
-            self.plot_settings[plot_name] = settings.copy()
-
-        # Apply to all plots
-        plot_map = {
-            "Individual Traces": self.parent.individual_plot,
-            "Mean Traces": self.parent.mean_plot,
-            "Peak Responses": self.parent.responses_plot,
-            "Area Under Curve": self.parent.auc_plot,
-            "Time to Peak": self.parent.time_to_peak_plot,
-            "Normalized to Ionomycin": self.parent.normalized_plot
-        }
-
-        for plot_name, plot in plot_map.items():
-            # Apply settings to the axes
-            plot.axes.set_xlabel(settings["x_label"],
-                               fontsize=settings["x_label_size"],
-                               color=settings["x_color"])
-
-            plot.axes.set_ylabel(settings["y_label"],
-                               fontsize=settings["y_label_size"],
-                               color=settings["y_color"])
-
-            # Set tick parameters
-            plot.axes.tick_params(axis='x',
-                                labelsize=settings["x_tick_size"],
-                                labelcolor=settings["x_color"],
-                                rotation=settings["x_rotation"])
-
-            plot.axes.tick_params(axis='y',
-                                labelsize=settings["y_tick_size"],
-                                labelcolor=settings["y_color"],
-                                rotation=settings["y_rotation"])
-
-            plot.draw()
-
-        # Display a status message
-        QMessageBox.information(self, "Settings Applied", "Settings applied to all plots")
-
-    def reset_to_defaults(self):
-        """Reset settings to defaults"""
-        current_plot = self.plot_selector.currentText()
-
-        # Default settings based on plot type
-        default_settings = {
-            "Individual Traces": {
-                "x_label": "Time (s)",
-                "y_label": "ΔF/F₀",
-                "x_label_size": 10,
-                "y_label_size": 10,
-                "x_tick_size": 8,
-                "y_tick_size": 8,
-                "x_rotation": 0,
-                "y_rotation": 90,
-                "x_color": "black",
-                "y_color": "black"
-            },
-            "Mean Traces": {
-                "x_label": "Time (s)",
-                "y_label": "ΔF/F₀",
-                "x_label_size": 10,
-                "y_label_size": 10,
-                "x_tick_size": 8,
-                "y_tick_size": 8,
-                "x_rotation": 0,
-                "y_rotation": 90,
-                "x_color": "black",
-                "y_color": "black"
-            },
-            "Peak Responses": {
-                "x_label": "Group",
-                "y_label": "Peak ΔF/F₀",
-                "x_label_size": 10,
-                "y_label_size": 10,
-                "x_tick_size": 8,
-                "y_tick_size": 8,
-                "x_rotation": 45,
-                "y_rotation": 90,
-                "x_color": "black",
-                "y_color": "black"
-            },
-            "Area Under Curve": {
-                "x_label": "Group",
-                "y_label": "Area Under Curve",
-                "x_label_size": 10,
-                "y_label_size": 10,
-                "x_tick_size": 8,
-                "y_tick_size": 8,
-                "x_rotation": 45,
-                "y_rotation": 90,
-                "x_color": "black",
-                "y_color": "black"
-            },
-            "Time to Peak": {
-                "x_label": "Group",
-                "y_label": "Time to Peak (s)",
-                "x_label_size": 10,
-                "y_label_size": 10,
-                "x_tick_size": 8,
-                "y_tick_size": 8,
-                "x_rotation": 45,
-                "y_rotation": 90,
-                "x_color": "black",
-                "y_color": "black"
-            },
-            "Normalized to Ionomycin": {
-                "x_label": "Group",
-                "y_label": "Response (% Ionomycin)",
-                "x_label_size": 10,
-                "y_label_size": 10,
-                "x_tick_size": 8,
-                "y_tick_size": 8,
-                "x_rotation": 45,
-                "y_rotation": 90,
-                "x_color": "black",
-                "y_color": "black"
-            }
-        }
-
-        self.plot_settings[current_plot] = default_settings[current_plot]
-        self.update_settings_display()
-
-        # Apply default settings to the plot
-        plot_map = {
-            "Individual Traces": self.parent.individual_plot,
-            "Mean Traces": self.parent.mean_plot,
-            "Peak Responses": self.parent.responses_plot,
-            "Area Under Curve": self.parent.auc_plot,
-            "Time to Peak": self.parent.time_to_peak_plot,
-            "Normalized to Ionomycin": self.parent.normalized_plot
-        }
-
-        plot = plot_map[current_plot]
-        settings = default_settings[current_plot]
-
-        # Apply settings to the axes
-        plot.axes.set_xlabel(settings["x_label"],
-                           fontsize=settings["x_label_size"],
-                           color=settings["x_color"])
-
-        plot.axes.set_ylabel(settings["y_label"],
-                           fontsize=settings["y_label_size"],
-                           color=settings["y_color"])
-
-        # Set tick parameters
-        plot.axes.tick_params(axis='x',
-                            labelsize=settings["x_tick_size"],
-                            labelcolor=settings["x_color"],
-                            rotation=settings["x_rotation"])
-
-        plot.axes.tick_params(axis='y',
-                            labelsize=settings["y_tick_size"],
-                            labelcolor=settings["y_color"],
-                            rotation=settings["y_rotation"])
-
-        plot.draw()
-
-        # Display a status message
-        QMessageBox.information(self, "Reset Complete", f"Settings for {current_plot} reset to defaults")
-
-
 class SummaryPlotWindow(QMainWindow):
     def __init__(self, parent=None):
-        super(SummaryPlotWindow, self).__init__(parent)
+        super().__init__(parent)
         self.setWindowTitle("Summary Plots")
         self.resize(800, 600)
 
@@ -635,10 +185,9 @@ class SummaryPlotWindow(QMainWindow):
         self.individual_tab = QWidget()
         self.mean_tab = QWidget()
         self.responses_tab = QWidget()
-        self.auc_tab = QWidget()
-        self.time_to_peak_tab = QWidget()
+        self.auc_tab = QWidget()  # New tab for AUC
+        self.time_to_peak_tab = QWidget()  # New tab for Time to Peak
         self.normalized_tab = QWidget()
-        self.settings_tab = QWidget()  # New tab for plot settings
 
         self.tab_widget.addTab(self.individual_tab, "Individual Traces")
         self.tab_widget.addTab(self.mean_tab, "Mean Traces")
@@ -646,106 +195,69 @@ class SummaryPlotWindow(QMainWindow):
         self.tab_widget.addTab(self.auc_tab, "Area Under Curve")
         self.tab_widget.addTab(self.time_to_peak_tab, "Time to Peak")
         self.tab_widget.addTab(self.normalized_tab, "Normalized to Ionomycin")
-        self.tab_widget.addTab(self.settings_tab, "Plot Settings")
 
-        # Create plot widgets using matplotlib canvas
-        self.individual_plot = MatplotlibCanvas()
-        self.individual_plot.axes.set_xlabel("Time (s)")
-        self.individual_plot.axes.set_ylabel("ΔF/F₀")
 
-        self.mean_plot = MatplotlibCanvas()
-        self.mean_plot.axes.set_xlabel("Time (s)")
-        self.mean_plot.axes.set_ylabel("ΔF/F₀")
+        # Create plot widgets for each tab
+        self.individual_plot = pg.PlotWidget()
+        self.individual_plot.setBackground('w')
+        self.individual_plot.setLabel('left', "ΔF/F₀")
+        self.individual_plot.setLabel('bottom', "Time (s)")
 
-        self.responses_plot = MatplotlibCanvas()
-        self.responses_plot.axes.set_xlabel("Group")
-        self.responses_plot.axes.set_ylabel("Peak ΔF/F₀")
-        self.responses_plot.axes.tick_params(axis='x', rotation=45)
+        self.mean_plot = pg.PlotWidget()
+        self.mean_plot.setBackground('w')
+        self.mean_plot.setLabel('left', "ΔF/F₀")
+        self.mean_plot.setLabel('bottom', "Time (s)")
 
-        self.normalized_plot = MatplotlibCanvas()
-        self.normalized_plot.axes.set_xlabel("Group")
-        self.normalized_plot.axes.set_ylabel("Response (% Ionomycin)")
-        self.normalized_plot.axes.tick_params(axis='x', rotation=45)
+        self.responses_plot = pg.PlotWidget()
+        self.responses_plot.setBackground('w')
+        self.responses_plot.setLabel('left', "Peak ΔF/F₀")
+        self.responses_plot.setLabel('bottom', "Group")
+
+        self.normalized_plot = pg.PlotWidget()
+        self.normalized_plot.setBackground('w')
+        self.normalized_plot.setLabel('left', "Response (% Ionomycin)")
+        self.normalized_plot.setLabel('bottom', "Group")
 
         # Create plot widgets for AUC and Time to Peak
-        self.auc_plot = MatplotlibCanvas()
-        self.auc_plot.axes.set_xlabel("Group")
-        self.auc_plot.axes.set_ylabel("Area Under Curve")
-        self.auc_plot.axes.tick_params(axis='x', rotation=45)
+        self.auc_plot = pg.PlotWidget()
+        self.auc_plot.setBackground('w')
+        self.auc_plot.setLabel('left', "Area Under Curve")
+        self.auc_plot.setLabel('bottom', "Group")
 
-        self.time_to_peak_plot = MatplotlibCanvas()
-        self.time_to_peak_plot.axes.set_xlabel("Group")
-        self.time_to_peak_plot.axes.set_ylabel("Time to Peak (s)")
-        self.time_to_peak_plot.axes.tick_params(axis='x', rotation=45)
+        self.time_to_peak_plot = pg.PlotWidget()
+        self.time_to_peak_plot.setBackground('w')
+        self.time_to_peak_plot.setLabel('left', "Time to Peak (s)")
+        self.time_to_peak_plot.setLabel('bottom', "Group")
 
         # Set up layouts for all tabs
         individual_layout = QVBoxLayout(self.individual_tab)
         individual_layout.addWidget(self.individual_plot)
-        individual_layout.addWidget(NavigationToolbar(self.individual_plot, self.individual_tab))
 
         mean_layout = QVBoxLayout(self.mean_tab)
         mean_layout.addWidget(self.mean_plot)
-        mean_layout.addWidget(NavigationToolbar(self.mean_plot, self.mean_tab))
 
         responses_layout = QVBoxLayout(self.responses_tab)
         responses_layout.addWidget(self.responses_plot)
-        responses_layout.addWidget(NavigationToolbar(self.responses_plot, self.responses_tab))
 
         auc_layout = QVBoxLayout(self.auc_tab)
         auc_layout.addWidget(self.auc_plot)
-        auc_layout.addWidget(NavigationToolbar(self.auc_plot, self.auc_tab))
 
         time_to_peak_layout = QVBoxLayout(self.time_to_peak_tab)
         time_to_peak_layout.addWidget(self.time_to_peak_plot)
-        time_to_peak_layout.addWidget(NavigationToolbar(self.time_to_peak_plot, self.time_to_peak_tab))
 
         normalized_layout = QVBoxLayout(self.normalized_tab)
         normalized_layout.addWidget(self.normalized_plot)
-        normalized_layout.addWidget(NavigationToolbar(self.normalized_plot, self.normalized_tab))
-
-        # Add settings tab
-        self.settings_panel = PlotSettingsTab(self)
-        settings_layout = QVBoxLayout(self.settings_tab)
-        settings_layout.addWidget(self.settings_panel)
 
         self.plot_items = {}  # Store plot items for reference
 
     def clear_plots(self):
         """Clear all plots"""
-        self.individual_plot.axes.clear()
-        self.individual_plot.axes.set_xlabel("Time (s)")
-        self.individual_plot.axes.set_ylabel("ΔF/F₀")
-        self.individual_plot.draw()
-
-        self.mean_plot.axes.clear()
-        self.mean_plot.axes.set_xlabel("Time (s)")
-        self.mean_plot.axes.set_ylabel("ΔF/F₀")
-        self.mean_plot.draw()
-
-        self.responses_plot.axes.clear()
-        self.responses_plot.axes.set_xlabel("Group")
-        self.responses_plot.axes.set_ylabel("Peak ΔF/F₀")
-        self.responses_plot.axes.tick_params(axis='x', rotation=45)
-        self.responses_plot.draw()
-
-        self.auc_plot.axes.clear()
-        self.auc_plot.axes.set_xlabel("Group")
-        self.auc_plot.axes.set_ylabel("Area Under Curve")
-        self.auc_plot.axes.tick_params(axis='x', rotation=45)
-        self.auc_plot.draw()
-
-        self.time_to_peak_plot.axes.clear()
-        self.time_to_peak_plot.axes.set_xlabel("Group")
-        self.time_to_peak_plot.axes.set_ylabel("Time to Peak (s)")
-        self.time_to_peak_plot.axes.tick_params(axis='x', rotation=45)
-        self.time_to_peak_plot.draw()
-
-        self.normalized_plot.axes.clear()
-        self.normalized_plot.axes.set_xlabel("Group")
-        self.normalized_plot.axes.set_ylabel("Response (% Ionomycin)")
-        self.normalized_plot.axes.tick_params(axis='x', rotation=45)
-        self.normalized_plot.draw()
-
+        self.individual_plot.clear()
+        self.mean_plot.clear()
+        self.responses_plot.clear()
+        self.auc_plot.clear()
+        self.time_to_peak_plot.clear()
+        self.normalized_plot.clear()
         self.plot_items = {}
 
 class DataProcessor:
@@ -2165,14 +1677,14 @@ class WellPlateLabeler(QMainWindow):
         grouped_data = self.group_data_by_metadata()
         logger.info(f"Processing {len(grouped_data)} groups for plotting")
 
-        # ---------------- MATPLOTLIB IMPLEMENTATION ----------------
+        # Add legend to individual traces plot
+        self.summary_plot_window.individual_plot.addLegend(offset=(10, 10))
+
+        # Add legend to mean traces plot
+        self.summary_plot_window.mean_plot.addLegend(offset=(10, 10))
 
         # Plot traces for each group
         non_ionomycin_count = 0  # Counter for normalized plot positioning
-
-        # Prepare color map for groups
-        group_colors = {}
-
         for i, (group_name, well_ids) in enumerate(grouped_data.items()):
             logger.info(f"Plotting group '{group_name}' with {len(well_ids)} wells")
 
@@ -2180,53 +1692,47 @@ class WellPlateLabeler(QMainWindow):
                 # Get color for this group
                 well_idx = next(idx for idx in range(96) if self.well_data[idx]["well_id"] == well_ids[0])
                 base_color = self.well_data[well_idx]["color"]
-                group_colors[group_name] = base_color
+                main_color = QColor(base_color)
+                transparent_color = QColor(base_color)
+                transparent_color.setAlpha(50)
+                light_pen = pg.mkPen(color=main_color, width=1, alpha=50)
 
                 # Get group data
                 group_data = self.dff_data.loc[well_ids]
 
-                # Plot individual traces
+                # Plot individual traces with proper legend
                 for well_id in well_ids:
                     trace_data = np.array(self.dff_data.loc[well_id])
                     if len(times) == len(trace_data):
-                        self.summary_plot_window.individual_plot.axes.plot(
+                        self.summary_plot_window.individual_plot.plot(
                             times,
                             trace_data,
-                            color=base_color,
-                            alpha=0.3,
-                            linewidth=1
+                            pen=light_pen,
+                            name=group_name if well_id == well_ids[0] else None  # Legend only for first trace
                         )
-
-                # Add legend entry for this group (only once)
-                self.summary_plot_window.individual_plot.axes.plot(
-                    [], [],
-                    color=base_color,
-                    linewidth=2,
-                    label=group_name
-                )
 
                 # Calculate and plot mean trace
                 mean_trace = np.array(group_data.mean())
                 sem_trace = np.array(group_data.sem())
 
                 if len(times) == len(mean_trace):
-                    # Plot mean trace on mean_plot
-                    self.summary_plot_window.mean_plot.axes.plot(
+                    # Plot mean trace
+                    self.summary_plot_window.mean_plot.plot(
                         times,
                         mean_trace,
-                        color=base_color,
-                        linewidth=2,
-                        label=group_name
+                        pen=pg.mkPen(main_color, width=2),
+                        name=group_name
                     )
 
                     # Add error bands
-                    self.summary_plot_window.mean_plot.axes.fill_between(
-                        times,
-                        mean_trace - sem_trace,
-                        mean_trace + sem_trace,
-                        color=base_color,
-                        alpha=0.3
+                    band_top = mean_trace + sem_trace
+                    band_bottom = mean_trace - sem_trace
+                    fill = pg.FillBetweenItem(
+                        pg.PlotDataItem(times, band_top),
+                        pg.PlotDataItem(times, band_bottom),
+                        brush=transparent_color
                     )
+                    self.summary_plot_window.mean_plot.addItem(fill)
 
                 # Calculate peak responses
                 peaks = np.array(group_data.max(axis=1))
@@ -2234,25 +1740,32 @@ class WellPlateLabeler(QMainWindow):
                 peak_sem = np.std(peaks) / np.sqrt(len(peaks))
 
                 # Add bar for peak response
-                self.summary_plot_window.responses_plot.axes.bar(
-                    i,
-                    peak_mean,
-                    yerr=peak_sem,
-                    color=base_color,
-                    capsize=5,
-                    label=group_name if i == 0 else None
+                bar = pg.BarGraphItem(
+                    x=[i],
+                    height=[peak_mean],
+                    width=0.8,
+                    brush=main_color
                 )
+                self.summary_plot_window.responses_plot.addItem(bar)
+
+                # Add error bars
+                error = pg.ErrorBarItem(
+                    x=np.array([i]),
+                    y=np.array([peak_mean]),
+                    height=np.array([peak_sem * 2]),
+                    beam=0.2,
+                    pen=pg.mkPen(main_color, width=2)
+                )
+                self.summary_plot_window.responses_plot.addItem(error)
 
                 # Add value label above bar
-                self.summary_plot_window.responses_plot.axes.text(
-                    i,
-                    peak_mean + peak_sem + 0.05 * peak_mean,
-                    f'{peak_mean:.1f}±{peak_sem:.1f}',
-                    ha='center',
-                    va='bottom',
-                    color=base_color,
-                    fontsize=8
+                text = pg.TextItem(
+                    text=f'{peak_mean:.1f}±{peak_sem:.1f}',
+                    color=main_color,
+                    anchor=(0.5, 1)
                 )
+                text.setPos(i, peak_mean + peak_sem * 2)
+                self.summary_plot_window.responses_plot.addItem(text)
 
                 # Add normalized responses if enabled (only for non-ionomycin groups)
                 if self.normalize_to_ionomycin and "ionomycin" not in group_name.lower():
@@ -2272,25 +1785,32 @@ class WellPlateLabeler(QMainWindow):
                             norm_sem = np.std(normalized_peaks) / np.sqrt(len(normalized_peaks))
 
                             # Add normalized bar with matching color
-                            self.summary_plot_window.normalized_plot.axes.bar(
-                                non_ionomycin_count,
-                                norm_mean,
-                                yerr=norm_sem,
-                                color=base_color,
-                                capsize=5,
-                                label=group_name if non_ionomycin_count == 0 else None
+                            norm_bar = pg.BarGraphItem(
+                                x=[non_ionomycin_count],
+                                height=[norm_mean],
+                                width=0.8,
+                                brush=main_color
                             )
+                            self.summary_plot_window.normalized_plot.addItem(norm_bar)
+
+                            # Add normalized error bars
+                            norm_error = pg.ErrorBarItem(
+                                x=np.array([non_ionomycin_count]),
+                                y=np.array([norm_mean]),
+                                height=np.array([norm_sem * 2]),
+                                beam=0.2,
+                                pen=pg.mkPen(main_color, width=2)
+                            )
+                            self.summary_plot_window.normalized_plot.addItem(norm_error)
 
                             # Add normalized value label
-                            self.summary_plot_window.normalized_plot.axes.text(
-                                non_ionomycin_count,
-                                norm_mean + norm_sem + 0.05 * norm_mean,
-                                f'{norm_mean:.1f}±{norm_sem:.1f}',
-                                ha='center',
-                                va='bottom',
-                                color=base_color,
-                                fontsize=8
+                            norm_text = pg.TextItem(
+                                text=f'{norm_mean:.1f}±{norm_sem:.1f}',
+                                color=main_color,
+                                anchor=(0.5, 1)
                             )
+                            norm_text.setPos(non_ionomycin_count, norm_mean + norm_sem * 2)
+                            self.summary_plot_window.normalized_plot.addItem(norm_text)
 
                             non_ionomycin_count += 1  # Increment counter for next non-ionomycin group
 
@@ -2299,54 +1819,71 @@ class WellPlateLabeler(QMainWindow):
                 auc_mean = group_auc.mean()
                 auc_sem = group_auc.std() / np.sqrt(len(group_auc))
 
-                # Add AUC bar
-                self.summary_plot_window.auc_plot.axes.bar(
-                    i,
-                    auc_mean,
-                    yerr=auc_sem,
-                    color=base_color,
-                    capsize=5,
-                    label=group_name if i == 0 else None
-                )
-
-                # Add AUC value label
-                self.summary_plot_window.auc_plot.axes.text(
-                    i,
-                    auc_mean + auc_sem + 0.05 * auc_mean,
-                    f'{auc_mean:.1f}±{auc_sem:.1f}',
-                    ha='center',
-                    va='bottom',
-                    color=base_color,
-                    fontsize=8
-                )
-
                 # Calculate time to peak
                 peak_times = group_data.idxmax(axis=1).astype(float)
                 time_to_peak_mean = peak_times.mean()
                 time_to_peak_sem = peak_times.std() / np.sqrt(len(peak_times))
 
-                # Add Time to Peak bar
-                self.summary_plot_window.time_to_peak_plot.axes.bar(
-                    i,
-                    time_to_peak_mean,
-                    yerr=time_to_peak_sem,
-                    color=base_color,
-                    capsize=5,
-                    label=group_name if i == 0 else None
+                # Add AUC bar
+                auc_bar = pg.BarGraphItem(
+                    x=[i],
+                    height=[auc_mean],
+                    width=0.8,
+                    brush=main_color
                 )
+                self.summary_plot_window.auc_plot.addItem(auc_bar)
+
+                # Add AUC error bars
+                auc_error = pg.ErrorBarItem(
+                    x=np.array([i]),
+                    y=np.array([auc_mean]),
+                    height=np.array([auc_sem * 2]),
+                    beam=0.2,
+                    pen=pg.mkPen(main_color, width=2)
+                )
+                self.summary_plot_window.auc_plot.addItem(auc_error)
+
+                # Add AUC value label
+                auc_text = pg.TextItem(
+                    text=f'{auc_mean:.1f}±{auc_sem:.1f}',
+                    color=main_color,
+                    anchor=(0.5, 1)
+                )
+                auc_text.setPos(i, auc_mean + auc_sem * 2)
+                self.summary_plot_window.auc_plot.addItem(auc_text)
+
+                # Add Time to Peak bar
+                ttp_bar = pg.BarGraphItem(
+                    x=[i],
+                    height=[time_to_peak_mean],
+                    width=0.8,
+                    brush=main_color
+                )
+                self.summary_plot_window.time_to_peak_plot.addItem(ttp_bar)
+
+                # Add Time to Peak error bars
+                ttp_error = pg.ErrorBarItem(
+                    x=np.array([i]),
+                    y=np.array([time_to_peak_mean]),
+                    height=np.array([time_to_peak_sem * 2]),
+                    beam=0.2,
+                    pen=pg.mkPen(main_color, width=2)
+                )
+                self.summary_plot_window.time_to_peak_plot.addItem(ttp_error)
 
                 # Add Time to Peak value label
-                self.summary_plot_window.time_to_peak_plot.axes.text(
-                    i,
-                    time_to_peak_mean + time_to_peak_sem + 0.05 * time_to_peak_mean,
-                    f'{time_to_peak_mean:.1f}±{time_to_peak_sem:.1f}',
-                    ha='center',
-                    va='bottom',
-                    color=base_color,
-                    fontsize=8
+                ttp_text = pg.TextItem(
+                    text=f'{time_to_peak_mean:.1f}±{time_to_peak_sem:.1f}',
+                    color=main_color,
+                    anchor=(0.5, 1)
                 )
+                ttp_text.setPos(i, time_to_peak_mean + time_to_peak_sem * 2)
+                self.summary_plot_window.time_to_peak_plot.addItem(ttp_text)
+
+
 
                 logger.info(f"Successfully plotted group {group_name}")
+
 
             except Exception as e:
                 logger.error(f"Error plotting group {group_name}: {str(e)}")
@@ -2354,43 +1891,57 @@ class WellPlateLabeler(QMainWindow):
                 logger.error(traceback.format_exc())
                 continue
 
-        # Add legends and apply settings
-        self.summary_plot_window.individual_plot.axes.legend()
-        self.summary_plot_window.mean_plot.axes.legend()
+        # Update all plot labels and settings
+        for plot in [self.summary_plot_window.individual_plot,
+                    self.summary_plot_window.mean_plot]:
+            plot.setLabel('left', 'ΔF/F₀')
+            plot.setLabel('bottom', 'Time (s)')
 
-        # Update bar chart x-labels with group names
-        all_group_names = list(grouped_data.keys())
+        # Update peak responses plot
+        self.summary_plot_window.responses_plot.setLabel('left', 'Peak ΔF/F₀')
+        self.summary_plot_window.responses_plot.setLabel('bottom', 'Groups')
 
-        # Set x-tick labels for bar plots
-        for plot, n_groups in [
-            (self.summary_plot_window.responses_plot, len(grouped_data)),
-            (self.summary_plot_window.auc_plot, len(grouped_data)),
-            (self.summary_plot_window.time_to_peak_plot, len(grouped_data))
-        ]:
-            plot.axes.set_xticks(range(n_groups))
-            plot.axes.set_xticklabels(all_group_names)
-            plot.axes.set_xlim(-0.5, n_groups - 0.5)
+        # Add group labels to response plot (all groups)
+        group_names = list(grouped_data.keys())
+        axis = self.summary_plot_window.responses_plot.getAxis('bottom')
+        ticks = [(i, name) for i, name in enumerate(group_names)]
+        axis.setTicks([ticks])
 
-        # Set x-tick labels for normalized plot (only non-ionomycin groups)
+        # Set axis ranges for responses plot
+        n_groups = len(grouped_data)
+        self.summary_plot_window.responses_plot.setXRange(-0.5, n_groups - 0.5)
+
+        # Update normalized plot labels and axes
         if self.normalize_to_ionomycin:
-            non_ionomycin_groups = [name for name in all_group_names
-                                   if "ionomycin" not in name.lower()]
+            self.summary_plot_window.normalized_plot.setLabel('left', 'Response (% Ionomycin)')
+            self.summary_plot_window.normalized_plot.setLabel('bottom', 'Groups')
 
-            self.summary_plot_window.normalized_plot.axes.set_xticks(range(len(non_ionomycin_groups)))
-            self.summary_plot_window.normalized_plot.axes.set_xticklabels(non_ionomycin_groups)
-            self.summary_plot_window.normalized_plot.axes.set_xlim(-0.5, len(non_ionomycin_groups) - 0.5)
+            # Create ticks only for non-ionomycin groups
+            non_ionomycin_groups = [name for name in grouped_data.keys()
+                                  if "ionomycin" not in name.lower()]
+            norm_ticks = [(i, name) for i, name in enumerate(non_ionomycin_groups)]
 
-        # Apply tight layout and draw all plots
-        for plot in [
-            self.summary_plot_window.individual_plot,
-            self.summary_plot_window.mean_plot,
-            self.summary_plot_window.responses_plot,
-            self.summary_plot_window.auc_plot,
-            self.summary_plot_window.time_to_peak_plot,
-            self.summary_plot_window.normalized_plot
-        ]:
-            plot.fig.tight_layout()
-            plot.draw()
+            axis = self.summary_plot_window.normalized_plot.getAxis('bottom')
+            axis.setTicks([norm_ticks])
+            self.summary_plot_window.normalized_plot.setXRange(-0.5, len(non_ionomycin_groups) - 0.5)
+
+        # Update AUC plot labels and axes
+        axis = self.summary_plot_window.auc_plot.getAxis('bottom')
+        ticks = [(i, name) for i, name in enumerate(grouped_data.keys())]
+        axis.setTicks([ticks])
+        self.summary_plot_window.auc_plot.setXRange(-0.5, len(grouped_data) - 0.5)
+
+        # Update Time to Peak plot labels and axes
+        axis = self.summary_plot_window.time_to_peak_plot.getAxis('bottom')
+        axis.setTicks([ticks])
+        self.summary_plot_window.time_to_peak_plot.setXRange(-0.5, len(grouped_data) - 0.5)
+
+
+        # Update results text
+        self.update_results_text()
+
+        self.show_status("Plots updated", 3000)
+        logger.info("Summary plot update completed")
 
 
     def open_file_dialog(self):
@@ -3200,21 +2751,6 @@ class WellPlateLabeler(QMainWindow):
                 QMessageBox.critical(self, "Error",
                                    f"Failed to export FLIPR layout: {str(e)}")
 
-
-class MatplotlibCanvas(FigureCanvas):
-    def __init__(self, parent=None, width=8, height=6, dpi=100):
-        self.fig = Figure(figsize=(width, height), dpi=dpi)
-        self.axes = self.fig.add_subplot(111)
-        super(MatplotlibCanvas, self).__init__(self.fig)
-        self.setParent(parent)
-        FigureCanvas.setSizePolicy(self,
-                                   QSizePolicy.Expanding,
-                                   QSizePolicy.Expanding)
-        FigureCanvas.updateGeometry(self)
-
-    def clear(self):
-        self.axes.clear()
-        self.draw()
 
 
 if __name__ == "__main__":
