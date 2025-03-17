@@ -1078,6 +1078,7 @@ class WellPlateLabeler(QMainWindow):
             ("Clear Selection", self.clear_selection),
             ("Save Layout", self.save_layout),
             ("Load Layout", self.load_layout),
+            ("Load CSV Layout", self.load_csv_layout),  # New CSV layout button
             ("Load Data", self.open_file_dialog)
         ]
 
@@ -1345,6 +1346,7 @@ class WellPlateLabeler(QMainWindow):
             ("Clear Selection", self.clear_selection),
             ("Save Layout", self.save_layout),
             ("Load Layout", self.load_layout),
+            ("Load CSV Layout", self.load_csv_layout),  # New CSV layout button
             ("Load Data", self.open_file_dialog)
         ]
 
@@ -3199,6 +3201,141 @@ class WellPlateLabeler(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Error",
                                    f"Failed to export FLIPR layout: {str(e)}")
+
+    # Add import layout from csv methods
+
+    def load_csv_layout(self):
+        """Load plate layout from a CSV file output by FLIPR"""
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load CSV Layout", "", "CSV Files (*.csv)", options=options)
+        if file_path:
+            try:
+                self.show_status("Loading CSV layout...")
+                # Parse the CSV file to extract Well IDs and Group names
+                well_groups = self.parse_flipr_csv(file_path)
+
+                if not well_groups:
+                    QMessageBox.warning(self, "Warning", "No well data found in CSV file. Check logs for details.")
+                    return
+
+                # Update well_data with information from CSV
+                self.update_layout_from_csv(well_groups)
+
+                self.show_status("CSV layout loaded successfully", 3000)
+            except Exception as e:
+                logger.error(f"Error loading CSV layout: {str(e)}")
+                self.show_status(f"Error loading CSV layout: {str(e)}", 5000)
+                QMessageBox.critical(self, "Error", f"Failed to load CSV layout: {str(e)}")
+
+    def parse_flipr_csv(self, file_path):
+        """Parse FLIPR CSV file to extract Well IDs and Group names"""
+        well_groups = {}
+
+        try:
+            # Read the CSV file with proper encoding
+            with open(file_path, 'r', encoding='cp1252') as f:
+                reader = csv.reader(f)
+                data = list(reader)
+
+            logger.info(f"CSV file loaded: {file_path}, found {len(data)} rows")
+
+            # Debug output of the first few rows to understand the structure
+            for i, row in enumerate(data[:10]):
+                logger.info(f"Row {i}: {row}")
+
+            # Locate the header row and necessary columns
+            header_row = None
+            group_col = None
+            well_col = None
+
+            # Try to find the header row with column names
+            for i, row in enumerate(data):
+                if len(row) < 2:
+                    continue
+
+                # Look for row containing group name and well ID columns
+                for j, cell in enumerate(row):
+                    cell_lower = cell.lower() if cell else ""
+                    if "group" in cell_lower and "name" in cell_lower:
+                        group_col = j
+                        logger.info(f"Found Group Name column at index {j} in row {i}: '{cell}'")
+
+                    if "well" in cell_lower and "id" in cell_lower:
+                        well_col = j
+                        logger.info(f"Found Well ID column at index {j} in row {i}: '{cell}'")
+
+                if group_col is not None and well_col is not None:
+                    header_row = i
+                    logger.info(f"Found header row at index {i}")
+                    break
+
+            if header_row is None or group_col is None or well_col is None:
+                logger.error(f"Could not find necessary columns. Header row: {header_row}, Group column: {group_col}, Well column: {well_col}")
+                raise ValueError("Could not find Group Name and Well ID columns in CSV file")
+
+            # Extract group names and well IDs
+            current_group = None
+            for i in range(header_row + 1, len(data)):
+                row = data[i]
+                if len(row) <= max(group_col, well_col):
+                    continue
+
+                group_cell = row[group_col].strip() if group_col < len(row) else ""
+                well_cell = row[well_col].strip() if well_col < len(row) else ""
+
+                # Check if we have a new group name
+                if group_cell and well_cell == "":
+                    current_group = group_cell
+                    logger.info(f"Found new group: {current_group}")
+
+                # Check if we have a well ID with a current group
+                elif current_group and well_cell:
+                    # Remove any spaces from the well ID
+                    well_id = well_cell.replace(" ", "")
+
+                    # Make sure it's a valid well ID (like A1, B2, etc.)
+                    if re.match(r'^[A-H][1-9][0-2]?$', well_id):
+                        well_groups[well_id] = current_group
+                        logger.debug(f"Assigned well {well_id} to group {current_group}")
+                    else:
+                        logger.debug(f"Skipped invalid well ID: {well_id}")
+
+            logger.info(f"Extracted {len(well_groups)} wells from CSV with {len(set(well_groups.values()))} groups")
+            for well, group in list(well_groups.items())[:10]:  # Show first 10 for debugging
+                logger.info(f"Well {well} -> Group {group}")
+
+            return well_groups
+
+        except Exception as e:
+            logger.error(f"Error parsing CSV: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise
+
+    def update_layout_from_csv(self, well_groups):
+        """Update well_data with information from CSV"""
+        # Assign colors to unique groups
+        unique_groups = set(well_groups.values())
+        group_colors = {}
+        for i, group in enumerate(unique_groups):
+            group_colors[group] = self.default_colors[i % len(self.default_colors)]
+
+        # Update well_data
+        updated_count = 0
+        for idx in range(96):
+            well_id = self.well_data[idx]["well_id"]
+            if well_id in well_groups:
+                group_name = well_groups[well_id]
+                # Update the well data
+                self.well_data[idx]["label"] = group_name
+                self.well_data[idx]["color"] = group_colors[group_name]
+                # Update button appearance
+                self.update_button(idx)
+                updated_count += 1
+
+        logger.info(f"Updated {updated_count} wells from CSV data")
+        QMessageBox.information(self, "CSV Loaded", f"Updated {updated_count} wells with {len(unique_groups)} groups from CSV data")
+
 
 
 class MatplotlibCanvas(FigureCanvas):
