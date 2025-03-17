@@ -953,6 +953,7 @@ class WellPlateLabeler(QMainWindow):
         # Initialize rest of the GUI
         self.init_data()
         self.setup_plate_tab()
+        self.setup_metadata_tab()
         self.setup_analysis_tab()
         self.create_menus()
 
@@ -1577,10 +1578,11 @@ class WellPlateLabeler(QMainWindow):
 
             # Create all sheets
             self.create_summary_sheet(wb)
+            self.create_experiment_summary_worksheet(wb)  # Add the new summary worksheet
             self.create_traces_sheet(wb, "Individual_Traces", self.dff_data)
             self.create_mean_traces_sheet(wb)
             self.create_peak_responses_sheet(wb)
-            self.create_analysis_metrics_sheet(wb)  # New detailed metrics sheet
+            self.create_analysis_metrics_sheet(wb)
 
             if self.normalize_to_ionomycin:
                 self.create_normalized_sheet(wb)
@@ -1940,6 +1942,22 @@ class WellPlateLabeler(QMainWindow):
         export_flipr_action = QAction('Export FLIPR Layout...', self)
         export_flipr_action.triggered.connect(self.export_to_flipr)
         file_menu.addAction(export_flipr_action)
+
+        # Add load CSV layout action
+        load_csv_action = QAction('Load CSV Layout...', self)
+        load_csv_action.triggered.connect(self.load_csv_layout)
+        file_menu.addAction(load_csv_action)
+
+        # Add metadata template options
+        file_menu.addSeparator()
+
+        export_metadata_template_action = QAction('Export Metadata Template...', self)
+        export_metadata_template_action.triggered.connect(lambda: self.metadata_tab.save_template())
+        file_menu.addAction(export_metadata_template_action)
+
+        import_metadata_template_action = QAction('Import Metadata Template...', self)
+        import_metadata_template_action.triggered.connect(lambda: self.metadata_tab.load_template())
+        file_menu.addAction(import_metadata_template_action)
 
         # Add separator
         file_menu.addSeparator()
@@ -2394,6 +2412,9 @@ class WellPlateLabeler(QMainWindow):
             plot.fig.tight_layout()
             plot.draw()
 
+        # Update the analysis results text display
+        self.update_results_text()
+
 
     def open_file_dialog(self):
         """Open file dialog to load FLIPR data"""
@@ -2499,11 +2520,15 @@ class WellPlateLabeler(QMainWindow):
             # Update summary plots if they exist
             if hasattr(self, 'summary_plot_window'):
                 self.update_summary_plots()
+            else:
+                # Even if we're not updating plots, update the results text
+                self.update_results_text()
 
         except Exception as e:
             logger.error(f"Error updating traces: {str(e)}")
             logger.debug(f"Stack trace:", exc_info=True)
             QMessageBox.warning(self, "Error", "Failed to update plot traces. See log for details.")
+
 
     def remove_traces(self, indices):
         """Remove traces for given well indices"""
@@ -3007,6 +3032,9 @@ class WellPlateLabeler(QMainWindow):
                 self.processed_time_points
             )
 
+            # Update analysis results display
+            self.update_results_text()
+
             self.show_status("Data processing completed", 3000)
             logger.info("Data processing completed successfully")
             logger.info(f"Processed data shape: {processed_data.shape}")
@@ -3336,6 +3364,308 @@ class WellPlateLabeler(QMainWindow):
         logger.info(f"Updated {updated_count} wells from CSV data")
         QMessageBox.information(self, "CSV Loaded", f"Updated {updated_count} wells with {len(unique_groups)} groups from CSV data")
 
+    def setup_metadata_tab(self):
+        """Set up the metadata tab"""
+        self.metadata_tab = MetadataTab(self)
+        self.tab_widget.addTab(self.metadata_tab, "Experiment Metadata")
+
+    def create_experiment_summary_worksheet(self, wb):
+        """Create comprehensive summary worksheet with one row per Sample ID"""
+        ws = wb.create_sheet("Experiment Summary")
+
+        # Get metadata from the metadata tab (everything except Sample ID)
+        metadata = self.metadata_tab.get_metadata()
+
+        # Define all the columns
+        metadata_columns = [
+            "Accession ID", "Sample ID", "Aliquot", "Plate per run date",
+            "Passage #", "Objective", "Experiment Date", "Media Type",
+            "FBS Lot No", "Cell Density", "Time Frame", "Variable A",
+            "Lab Operator", "Schmunk Ca2+ Signal", "Phenotype",
+            "Result of interest", "Expected/Optimal Results"
+        ]
+
+        analysis_columns = [
+            "Peak Response: ATP", "Peak Response: Ionomycin 1uM", "Peak Response: HBSS Buffer",
+            "Time to Peak: ATP", "Time to Peak: Ionomycin 1uM", "Time to Peak: HBSS Buffer",
+            "AUC: ATP", "AUC: Ionomycin 1uM", "AUC: HBSS Buffer",
+            "Normalized to Ionomycin: ATP", "Normalized to Ionomycin: HBSS Buffer"
+        ]
+
+        all_columns = metadata_columns + analysis_columns
+
+        # Write header row
+        for col, header in enumerate(all_columns, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = Font(bold=True)
+
+        # Get unique Sample IDs from plate layout
+        unique_sample_ids = set()
+        for idx in range(96):
+            sample_id = self.well_data[idx].get("sample_id")
+            if sample_id:
+                unique_sample_ids.add(sample_id)
+
+        # If no Sample IDs found, create one row with default values
+        if not unique_sample_ids:
+            unique_sample_ids = [""]
+
+        logger.info(f"Found {len(unique_sample_ids)} unique Sample IDs: {', '.join(unique_sample_ids)}")
+
+        # Create a row for each unique Sample ID
+        current_row = 2
+        for sample_id in sorted(unique_sample_ids):
+            # Write metadata values (same for all rows except Sample ID)
+            for col, field in enumerate(metadata_columns, 1):
+                if field == "Sample ID":
+                    # Sample ID comes from plate layout, not metadata
+                    ws.cell(row=current_row, column=col, value=sample_id)
+                else:
+                    # All other fields come from metadata
+                    ws.cell(row=current_row, column=col, value=metadata.get(field, ""))
+
+            # Get wells with this Sample ID
+            sample_wells = []
+            for idx in range(96):
+                if self.well_data[idx].get("sample_id") == sample_id:
+                    sample_wells.append(self.well_data[idx]["well_id"])
+
+            if not sample_wells:
+                # Skip to next Sample ID if no wells found
+                current_row += 1
+                continue
+
+            # Group wells by condition type (ATP, Ionomycin, HBSS)
+            condition_groups = {}
+            for idx in range(96):
+                if self.well_data[idx].get("sample_id") == sample_id:
+                    well_id = self.well_data[idx]["well_id"]
+                    label = self.well_data[idx].get("label", "").lower()
+
+                    # Determine condition type
+                    condition_type = None
+                    if "atp" in label:
+                        condition_type = "ATP"
+                    elif "ionom" in label:
+                        condition_type = "Ionomycin"
+                    elif "hbss" in label or "buffer" in label:
+                        condition_type = "HBSS"
+
+                    if condition_type:
+                        if condition_type not in condition_groups:
+                            condition_groups[condition_type] = []
+                        condition_groups[condition_type].append(well_id)
+
+            # Calculate analysis results for each condition type
+            start_col = len(metadata_columns) + 1  # Column to start writing analysis results
+
+            if self.dff_data is not None:
+                # Function to safely calculate metrics for a condition group
+                def calculate_metrics(condition_type):
+                    if condition_type not in condition_groups:
+                        return None, None, None
+
+                    wells = condition_groups[condition_type]
+                    if not wells or not all(well in self.dff_data.index for well in wells):
+                        return None, None, None
+
+                    group_data = self.dff_data.loc[wells]
+
+                    # Peak response
+                    peak_response = group_data.max(axis=1).mean()
+
+                    # Time to peak
+                    time_to_peak = group_data.idxmax(axis=1).astype(float).mean()
+
+                    # AUC
+                    auc = self.auc_data[wells].mean() if hasattr(self, 'auc_data') else None
+
+                    return peak_response, time_to_peak, auc
+
+                # Calculate metrics for each condition type
+                atp_peak, atp_time, atp_auc = calculate_metrics("ATP")
+                iono_peak, iono_time, iono_auc = calculate_metrics("Ionomycin")
+                hbss_peak, hbss_time, hbss_auc = calculate_metrics("HBSS")
+
+                # Write peak responses
+                if atp_peak is not None:
+                    ws.cell(row=current_row, column=start_col, value=round(float(atp_peak), 3))
+                if iono_peak is not None:
+                    ws.cell(row=current_row, column=start_col+1, value=round(float(iono_peak), 3))
+                if hbss_peak is not None:
+                    ws.cell(row=current_row, column=start_col+2, value=round(float(hbss_peak), 3))
+
+                # Write time to peak
+                if atp_time is not None:
+                    ws.cell(row=current_row, column=start_col+3, value=round(float(atp_time), 3))
+                if iono_time is not None:
+                    ws.cell(row=current_row, column=start_col+4, value=round(float(iono_time), 3))
+                if hbss_time is not None:
+                    ws.cell(row=current_row, column=start_col+5, value=round(float(hbss_time), 3))
+
+                # Write AUC
+                if atp_auc is not None:
+                    ws.cell(row=current_row, column=start_col+6, value=round(float(atp_auc), 3))
+                if iono_auc is not None:
+                    ws.cell(row=current_row, column=start_col+7, value=round(float(iono_auc), 3))
+                if hbss_auc is not None:
+                    ws.cell(row=current_row, column=start_col+8, value=round(float(hbss_auc), 3))
+
+                # Write normalized responses
+                if atp_peak is not None and iono_peak is not None and iono_peak > 0:
+                    norm_atp = (atp_peak / iono_peak) * 100
+                    ws.cell(row=current_row, column=start_col+9, value=round(float(norm_atp), 3))
+
+                if hbss_peak is not None and iono_peak is not None and iono_peak > 0:
+                    norm_hbss = (hbss_peak / iono_peak) * 100
+                    ws.cell(row=current_row, column=start_col+10, value=round(float(norm_hbss), 3))
+
+            current_row += 1
+
+        # Auto-adjust column widths
+        for column in ws.columns:
+            max_length = 0
+            column = list(column)
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+                adjusted_width = (max_length + 2)
+                ws.column_dimensions[column[0].column_letter].width = adjusted_width
+
+
+
+class MetadataTab(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent = parent
+        self.setup_ui()
+
+    def setup_ui(self):
+        # Main layout
+        main_layout = QVBoxLayout(self)
+
+        # Create a scroll area for the form - this allows scrolling if the form is too long
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+
+        # Create a form layout for the metadata fields
+        form_layout = QFormLayout()
+        form_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form_layout.setLabelAlignment(Qt.AlignRight)
+
+        # Create input fields for all the metadata
+        self.metadata_fields = {}
+
+        # Define all the metadata fields - REMOVED "Sample ID"
+        fields = [
+            "Accession ID", "Aliquot", "Plate per run date",
+            "Passage #", "Objective", "Experiment Date", "Media Type",
+            "FBS Lot No", "Cell Density", "Time Frame", "Variable A",
+            "Lab Operator", "Schmunk Ca2+ Signal", "Phenotype",
+            "Result of interest", "Expected/Optimal Results"
+        ]
+
+        # Create input field for each metadata field
+        for field in fields:
+            if field in ["Objective", "Media Type", "Result of interest", "Expected/Optimal Results"]:
+                # Use text edit for fields that might need more space
+                input_widget = QTextEdit()
+                input_widget.setMaximumHeight(80)  # Limit height
+            else:
+                input_widget = QLineEdit()
+
+            self.metadata_fields[field] = input_widget
+            form_layout.addRow(f"{field}:", input_widget)
+
+        # Add the form to the scroll layout
+        scroll_layout.addLayout(form_layout)
+
+        # Set the scroll content
+        scroll_area.setWidget(scroll_content)
+
+        # Add save/load buttons
+        button_layout = QHBoxLayout()
+
+        save_template_btn = QPushButton("Save Template")
+        save_template_btn.clicked.connect(self.save_template)
+
+        load_template_btn = QPushButton("Load Template")
+        load_template_btn.clicked.connect(self.load_template)
+
+        clear_all_btn = QPushButton("Clear All")
+        clear_all_btn.clicked.connect(self.clear_all)
+
+        button_layout.addWidget(save_template_btn)
+        button_layout.addWidget(load_template_btn)
+        button_layout.addWidget(clear_all_btn)
+
+        # Add the scroll area and buttons to the main layout
+        main_layout.addWidget(scroll_area)
+        main_layout.addLayout(button_layout)
+
+    def get_metadata(self):
+        """Get all metadata values as a dictionary"""
+        metadata = {}
+        for field, widget in self.metadata_fields.items():
+            if isinstance(widget, QTextEdit):
+                metadata[field] = widget.toPlainText()
+            else:
+                metadata[field] = widget.text()
+        return metadata
+
+    def set_metadata(self, metadata):
+        """Set metadata values from a dictionary"""
+        for field, value in metadata.items():
+            if field in self.metadata_fields:
+                widget = self.metadata_fields[field]
+                if isinstance(widget, QTextEdit):
+                    widget.setPlainText(value)
+                else:
+                    widget.setText(value)
+
+    def save_template(self):
+        """Save current metadata as a template"""
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Metadata Template", "",
+            "JSON Files (*.json)", options=options
+        )
+        if file_path:
+            try:
+                with open(file_path, 'w') as f:
+                    json.dump(self.get_metadata(), f, indent=2)
+                QMessageBox.information(self, "Success", "Metadata template saved successfully")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save template: {str(e)}")
+
+    def load_template(self):
+        """Load metadata from a template file"""
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Load Metadata Template", "",
+            "JSON Files (*.json)", options=options
+        )
+        if file_path:
+            try:
+                with open(file_path, 'r') as f:
+                    metadata = json.load(f)
+                self.set_metadata(metadata)
+                QMessageBox.information(self, "Success", "Metadata template loaded successfully")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to load template: {str(e)}")
+
+    def clear_all(self):
+        """Clear all metadata fields"""
+        for widget in self.metadata_fields.values():
+            if isinstance(widget, QTextEdit):
+                widget.clear()
+            else:
+                widget.clear()
 
 
 class MatplotlibCanvas(FigureCanvas):

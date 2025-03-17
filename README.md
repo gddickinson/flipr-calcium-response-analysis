@@ -8,9 +8,10 @@
 5. [Loading Data](#loading-data)
 6. [Plate Layout Configuration](#plate-layout-configuration)
 7. [Data Analysis](#data-analysis)
-8. [Visualization](#visualization)
-9. [Exporting Results](#exporting-results)
-10. [Troubleshooting](#troubleshooting)
+8. [Experiment Metadata](#experiment-metadata)
+9. [Visualization](#visualization)
+10. [Exporting Results](#exporting-results)
+11. [Troubleshooting](#troubleshooting)
 
 ## Introduction
 
@@ -18,11 +19,12 @@ The FLIPR Analysis Tool is a specialized software application designed for analy
 
 ### Key Features
 - Interactive 96-well plate layout configuration
+- Direct CSV layout import from FLIPR machine outputs
 - Raw and ΔF/F₀ trace visualization
 - Automated artifact removal
 - Statistical analysis with multiple metrics
 - Ionomycin normalization capability
-- Comprehensive data export options
+- Comprehensive data export options with experiment metadata
 - Area Under Curve (AUC) analysis
 - Time to peak measurements
 
@@ -52,17 +54,19 @@ pip install PyQt5 pandas numpy pyqtgraph openpyxl
 2. Configure analysis parameters (Analysis → Parameters)
 3. Load your FLIPR data file
 4. Configure your plate layout before analysis
+5. Enter experiment metadata for comprehensive exports
 
 ### File Formats
 The tool accepts FLIPR output files in the following formats:
 - .seq1 files (FLIPR native format)
 - Tab-delimited text files (.txt)
+- CSV files for plate layout import
 - File must contain a header row and time-series data
 
 ## Main Interface
 
 ### Window Layout
-The interface consists of two main tabs:
+The interface consists of three main tabs:
 1. **Plate Layout Tab**
    - 96-well plate grid
    - Well labeling controls
@@ -75,8 +79,13 @@ The interface consists of two main tabs:
    - Results display
    - Export options
 
+3. **Experiment Metadata Tab**
+   - Experiment details input
+   - Template saving/loading
+   - Sample-specific documentation
+
 ### Menu Bar
-- **File**: Layout export options
+- **File**: Layout export/import options, metadata templates
 - **Analysis**: Parameter settings
 - **Help**: Manual and about information
 
@@ -87,6 +96,12 @@ The interface consists of two main tabs:
 2. Select your .seq1 or .txt file
 3. The file will be validated and loaded
 4. A confirmation message will appear upon successful loading
+
+### Loading Plate Layout from CSV
+1. Click "Load CSV Layout" or use File → Load CSV Layout
+2. Select your CSV file exported from the FLIPR machine
+3. The application will extract well IDs and group names
+4. Wells will be automatically labeled and color-coded
 
 ### Data Validation
 The tool automatically checks for:
@@ -154,6 +169,36 @@ Access via Analysis → Parameters to set:
    - Accounts for artifact removal if enabled
    - Shown in summary plots and exports
 
+## Experiment Metadata
+
+### Metadata Entry
+The Experiment Metadata tab allows you to enter detailed information about your experiment:
+- Accession ID
+- Aliquot
+- Plate per run date
+- Passage number
+- Objective
+- Experiment date
+- Media type
+- FBS lot number
+- Cell density
+- Time frame
+- Variables
+- Lab operator
+- Phenotype
+- Results of interest
+- Expected/optimal results
+
+### Metadata Templates
+- Save metadata as templates for repeated experiments
+- Load templates to quickly populate fields
+- Templates are stored as JSON files for easy sharing
+
+### Integration with Sample IDs
+- Sample IDs are defined in the plate layout
+- Each unique Sample ID gets its own row in the experiment summary
+- Measurements are calculated separately for each Sample ID
+
 ## Visualization
 
 ### Available Plot Types
@@ -192,22 +237,29 @@ Creates a workbook with multiple sheets:
    - Time to peak
    - Normalized responses (if enabled)
 
-2. **Individual_Traces**
+2. **Experiment Summary**
+   - Complete experiment metadata
+   - Sample-specific measurements
+   - Organized by unique Sample IDs
+   - Direct comparison of ATP, Ionomycin, and HBSS responses
+   - Normalized responses for each Sample ID
+
+3. **Individual_Traces**
    - Complete trace data
    - Well assignments
    - Concentrations
 
-3. **Mean_Traces**
+4. **Mean_Traces**
    - Averaged responses
    - SEM calculations
    - Time points
 
-4. **Peak_Responses**
+5. **Peak_Responses**
    - Maximum responses
    - Time to peak
    - AUC values
 
-5. **Analysis_Metrics**
+6. **Analysis_Metrics**
    - Detailed statistics
    - Group comparisons
    - Quality metrics
@@ -226,12 +278,17 @@ Creates a workbook with multiple sheets:
    - Verify data structure
    - Ensure no missing values
 
-2. **Plot Display Issues**
+2. **CSV Layout Import Issues**
+   - Verify the CSV contains "Group Name" and "Well ID" columns
+   - Check that well IDs are in correct format (e.g., "A1", "B2")
+   - Ensure group names are properly aligned with well IDs
+
+3. **Plot Display Issues**
    - Verify well selection
    - Check data processing
    - Confirm parameter settings
 
-3. **Export Errors**
+4. **Export Errors**
    - Check file permissions
    - Close existing Excel files
    - Verify available disk space
@@ -251,18 +308,31 @@ For additional support or to report issues:
    - Label wells before analysis
    - Use consistent naming
    - Save layouts for repeated experiments
+   - Use Sample IDs consistently for proper grouping in exports
 
-2. **Analysis Workflow**
+2. **CSV Layout Import**
+   - Export CSV directly from FLIPR machine when possible
+   - Review group assignments after import
+   - Adjust colors manually if needed
+
+3. **Using Metadata**
+   - Create templates for common experiment types
+   - Be consistent with Sample IDs between plate layout and metadata
+   - Fill in all relevant fields for comprehensive documentation
+
+4. **Analysis Workflow**
    - Set parameters first
    - Verify well assignments
    - Review raw data before processing
+   - Enter metadata before exporting results
 
-3. **Quality Control**
+5. **Quality Control**
    - Check baseline stability
    - Verify artifact removal
    - Compare replicates
 
-4. **Data Export**
+6. **Data Export**
    - Save layouts separately
    - Document parameter settings
    - Include all relevant metadata
+   - Name files consistently for easy tracking
