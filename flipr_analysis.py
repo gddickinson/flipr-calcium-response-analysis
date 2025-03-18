@@ -1229,12 +1229,11 @@ class WellPlateLabeler(QMainWindow):
         self.wells[index].setStyleSheet(f"""
             QPushButton {{
                 background-color: {data['color']};
-                padding: 5px;
-                min-width: 80px;
-                min-height: 80px;
-                font-size: 12pt;
+                padding: 2px;
+                min-width: 90px;
+                min-height: 90px;
+                font-size: {self.font_size}pt;
                 text-align: center;
-                qproperty-alignment: AlignCenter;
             }}
         """)
 
@@ -1423,7 +1422,6 @@ class WellPlateLabeler(QMainWindow):
                 min-height: 90px;
                 font-size: {self.font_size}pt;
                 text-align: center;
-                qproperty-alignment: AlignCenter;
             }}
         """)
 
