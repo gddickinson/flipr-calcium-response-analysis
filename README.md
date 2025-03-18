@@ -7,26 +7,29 @@
 4. [Main Interface](#main-interface)
 5. [Loading Data](#loading-data)
 6. [Plate Layout Configuration](#plate-layout-configuration)
-7. [Data Analysis](#data-analysis)
-8. [Experiment Metadata](#experiment-metadata)
-9. [Visualization](#visualization)
-10. [Exporting Results](#exporting-results)
-11. [Troubleshooting](#troubleshooting)
+7. [Experiment Metadata](#experiment-metadata)
+8. [Data Analysis](#data-analysis)
+9. [Diagnostic Analysis](#diagnostic-analysis)
+10. [Visualization](#visualization)
+11. [Exporting Results](#exporting-results)
+12. [Troubleshooting](#troubleshooting)
 
 ## Introduction
 
-The FLIPR Analysis Tool is a specialized software application designed for analyzing calcium imaging data from FLIPR (Fluorometric Imaging Plate Reader) experiments. It provides a comprehensive suite of tools for data processing, visualization, and analysis of calcium responses in 96-well plate formats.
+The FLIPR Analysis Tool is a specialized software application designed for analyzing calcium imaging data from FLIPR (Fluorometric Imaging Plate Reader) experiments. It provides a comprehensive suite of tools for data processing, visualization, analysis, and diagnostic evaluation of calcium responses in 96-well plate formats.
 
 ### Key Features
 - Interactive 96-well plate layout configuration
-- Direct CSV layout import from FLIPR machine outputs
 - Raw and ΔF/F₀ trace visualization
 - Automated artifact removal
 - Statistical analysis with multiple metrics
 - Ionomycin normalization capability
-- Comprehensive data export options with experiment metadata
+- Comprehensive data export options
 - Area Under Curve (AUC) analysis
 - Time to peak measurements
+- Direct import from FLIPR CSV output
+- Experiment metadata tracking
+- Diagnostic analysis for clinical applications
 
 ## Installation
 
@@ -38,12 +41,13 @@ The FLIPR Analysis Tool is a specialized software application designed for analy
   - numpy
   - pyqtgraph
   - openpyxl
+  - matplotlib
 
 ### Installation Steps
 1. Install Python from https://www.python.org/downloads/
 2. Install required packages using pip:
 ```bash
-pip install PyQt5 pandas numpy pyqtgraph openpyxl
+pip install PyQt5 pandas numpy pyqtgraph openpyxl matplotlib
 ```
 3. Download and run the FLIPR Analysis Tool script
 
@@ -54,19 +58,18 @@ pip install PyQt5 pandas numpy pyqtgraph openpyxl
 2. Configure analysis parameters (Analysis → Parameters)
 3. Load your FLIPR data file
 4. Configure your plate layout before analysis
-5. Enter experiment metadata for comprehensive exports
 
 ### File Formats
 The tool accepts FLIPR output files in the following formats:
 - .seq1 files (FLIPR native format)
 - Tab-delimited text files (.txt)
-- CSV files for plate layout import
+- CSV files for layout import (direct from FLIPR machine)
 - File must contain a header row and time-series data
 
 ## Main Interface
 
 ### Window Layout
-The interface consists of three main tabs:
+The interface consists of four main tabs:
 1. **Plate Layout Tab**
    - 96-well plate grid
    - Well labeling controls
@@ -80,12 +83,19 @@ The interface consists of three main tabs:
    - Export options
 
 3. **Experiment Metadata Tab**
-   - Experiment details input
-   - Template saving/loading
-   - Sample-specific documentation
+   - Experiment details
+   - Sample information
+   - Protocol parameters
+   - Experimental conditions
+
+4. **Diagnosis Options Tab**
+   - Control column selection
+   - Quality control test parameters
+   - Diagnostic thresholds
+   - Buffer control options
 
 ### Menu Bar
-- **File**: Layout export/import options, metadata templates
+- **File**: Layout export options, CSV layout import
 - **Analysis**: Parameter settings
 - **Help**: Manual and about information
 
@@ -97,11 +107,11 @@ The interface consists of three main tabs:
 3. The file will be validated and loaded
 4. A confirmation message will appear upon successful loading
 
-### Loading Plate Layout from CSV
+### Loading Layout from FLIPR CSV
 1. Click "Load CSV Layout" or use File → Load CSV Layout
-2. Select your CSV file exported from the FLIPR machine
+2. Select the CSV file exported from your FLIPR machine
 3. The application will extract well IDs and group names
-4. Wells will be automatically labeled and color-coded
+4. Well layout will be updated with the imported information
 
 ### Data Validation
 The tool automatically checks for:
@@ -117,6 +127,7 @@ The tool automatically checks for:
 - Click row headers (A-H) to select entire rows
 - Click column headers (1-12) to select entire columns
 - Click top-left corner to select all wells
+- Shift-select for range selection
 
 ### Labeling Modes
 1. **Simple Label**
@@ -138,6 +149,36 @@ The tool automatically checks for:
 - Click color button to open color picker
 - Colors help visualize different conditions
 - Colors are preserved in plots and exports
+
+## Experiment Metadata
+
+### Metadata Fields
+- Accession ID
+- Aliquot
+- Plate per run date
+- Passage #
+- Objective
+- Experiment Date
+- Media Type
+- FBS Lot No
+- Cell Density
+- Time Frame
+- Variable A
+- Lab Operator
+- Schmunk Ca2+ Signal
+- Phenotype
+- Result of interest
+- Expected/Optimal Results
+
+### Template Management
+- Save commonly used metadata as templates
+- Load templates for consistent experiment documentation
+- Reset to defaults when needed
+
+### Data Integration
+- Metadata is combined with analysis results
+- Sample IDs from plate layout are used to organize results
+- Complete experimental context is preserved in exports
 
 ## Data Analysis
 
@@ -169,35 +210,40 @@ Access via Analysis → Parameters to set:
    - Accounts for artifact removal if enabled
    - Shown in summary plots and exports
 
-## Experiment Metadata
+## Diagnostic Analysis
 
-### Metadata Entry
-The Experiment Metadata tab allows you to enter detailed information about your experiment:
-- Accession ID
-- Aliquot
-- Plate per run date
-- Passage number
-- Objective
-- Experiment date
-- Media type
-- FBS lot number
-- Cell density
-- Time frame
-- Variables
-- Lab operator
-- Phenotype
-- Results of interest
-- Expected/optimal results
+### Diagnosis Setup
+1. Configure control columns in the Diagnosis Options tab:
+   - Positive Control: Define columns containing positive controls
+   - Negative Control: Define columns containing negative controls
+   - Buffer Control: Define columns containing buffer (optional)
+   - Test Samples: Define columns containing test samples
 
-### Metadata Templates
-- Save metadata as templates for repeated experiments
-- Load templates to quickly populate fields
-- Templates are stored as JSON files for easy sharing
+2. Configure quality control tests:
+   - Injection Artifact Tests
+   - Raw Data Tests
+   - ΔF/F₀ Tests
+   - Control Tests
+   
+3. Set diagnostic threshold:
+   - Autism Risk Threshold: Define the normalized ATP response threshold
 
-### Integration with Sample IDs
-- Sample IDs are defined in the plate layout
-- Each unique Sample ID gets its own row in the experiment summary
-- Measurements are calculated separately for each Sample ID
+### Running Diagnosis
+1. Enable "Generate Diagnosis" in the Analysis tab
+2. Process data (diagnosis runs automatically)
+3. View results in the Analysis tab and Diagnosis plot
+
+### Quality Control
+- Tests validate data quality before diagnosis
+- Failed tests invalidate diagnosis
+- Test results are documented in exports
+- Buffer control can be optional based on experiment design
+
+### Diagnostic Output
+- Sample-specific diagnosis with normalized values
+- Color-coded status (POSITIVE/NEGATIVE/INVALID)
+- Comprehensive test result documentation
+- Visualization in dedicated Diagnosis tab
 
 ## Visualization
 
@@ -219,6 +265,7 @@ The Experiment Metadata tab allows you to enter detailed information about your 
    - Area Under Curve: AUC comparison
    - Time to Peak: Response timing
    - Normalized (when enabled): % of ionomycin
+   - Diagnosis (when enabled): Diagnostic results with threshold
 
 ### Plot Controls
 - Toggle grid display
@@ -238,11 +285,9 @@ Creates a workbook with multiple sheets:
    - Normalized responses (if enabled)
 
 2. **Experiment Summary**
-   - Complete experiment metadata
-   - Sample-specific measurements
-   - Organized by unique Sample IDs
-   - Direct comparison of ATP, Ionomycin, and HBSS responses
-   - Normalized responses for each Sample ID
+   - Comprehensive metadata with analysis results
+   - Sample-specific results organized by Sample ID
+   - Combines experimental context with quantitative results
 
 3. **Individual_Traces**
    - Complete trace data
@@ -264,6 +309,12 @@ Creates a workbook with multiple sheets:
    - Group comparisons
    - Quality metrics
 
+7. **Diagnosis Results** (when diagnosis is enabled)
+   - Diagnosis configuration
+   - Sample-specific diagnostic results
+   - Quality control test results
+   - Color-coded pass/fail indicators
+
 ### FLIPR Format Export
 - Exports plate layout as .fmg file
 - Compatible with FLIPR software
@@ -279,16 +330,22 @@ Creates a workbook with multiple sheets:
    - Ensure no missing values
 
 2. **CSV Layout Import Issues**
-   - Verify the CSV contains "Group Name" and "Well ID" columns
-   - Check that well IDs are in correct format (e.g., "A1", "B2")
-   - Ensure group names are properly aligned with well IDs
+   - Verify CSV structure matches expected format
+   - Check for Well ID and Group columns
+   - Make sure encoding is correct (CP-1252)
 
 3. **Plot Display Issues**
    - Verify well selection
    - Check data processing
    - Confirm parameter settings
 
-4. **Export Errors**
+4. **Diagnosis Issues**
+   - Ensure control columns are correctly defined
+   - Check for overlapping column definitions
+   - Verify ionomycin wells are properly labeled
+   - Make sure quality control thresholds are appropriate
+
+5. **Export Errors**
    - Check file permissions
    - Close existing Excel files
    - Verify available disk space
@@ -308,31 +365,28 @@ For additional support or to report issues:
    - Label wells before analysis
    - Use consistent naming
    - Save layouts for repeated experiments
-   - Use Sample IDs consistently for proper grouping in exports
+   - Import layouts directly from FLIPR CSV when available
 
-2. **CSV Layout Import**
-   - Export CSV directly from FLIPR machine when possible
-   - Review group assignments after import
-   - Adjust colors manually if needed
-
-3. **Using Metadata**
-   - Create templates for common experiment types
-   - Be consistent with Sample IDs between plate layout and metadata
-   - Fill in all relevant fields for comprehensive documentation
-
-4. **Analysis Workflow**
+2. **Analysis Workflow**
    - Set parameters first
    - Verify well assignments
    - Review raw data before processing
-   - Enter metadata before exporting results
+   - Document experiment metadata
 
-5. **Quality Control**
+3. **Diagnostic Setup**
+   - Validate control columns carefully
+   - Check for overlapping column definitions
+   - Fine-tune quality control thresholds
+   - Save diagnostic configurations as templates
+
+4. **Quality Control**
    - Check baseline stability
    - Verify artifact removal
    - Compare replicates
+   - Review all diagnosis test results
 
-6. **Data Export**
+5. **Data Export**
    - Save layouts separately
    - Document parameter settings
    - Include all relevant metadata
-   - Name files consistently for easy tracking
+   - Use clear Sample IDs for consistency
