@@ -3463,7 +3463,7 @@ class WellPlateLabeler(QMainWindow):
             if well_id in well_groups:
                 group_name = well_groups[well_id]
                 # Update the well data
-                self.well_data[idx]["label"] = group_name
+                self.well_data[idx]["sample_id"] = group_name
                 self.well_data[idx]["color"] = group_colors[group_name]
                 # Update button appearance
                 self.update_button(idx)
