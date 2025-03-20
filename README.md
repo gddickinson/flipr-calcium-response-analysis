@@ -30,6 +30,7 @@ The FLIPR Analysis Tool is a specialized software application designed for analy
 - Direct import from FLIPR CSV output
 - Experiment metadata tracking
 - Diagnostic analysis for clinical applications
+- Customizable quality control parameters
 
 ## Installation
 
@@ -58,6 +59,7 @@ pip install PyQt5 pandas numpy pyqtgraph openpyxl matplotlib
 2. Configure analysis parameters (Analysis → Parameters)
 3. Load your FLIPR data file
 4. Configure your plate layout before analysis
+5. Set up diagnosis parameters if performing diagnostic analysis
 
 ### File Formats
 The tool accepts FLIPR output files in the following formats:
@@ -93,6 +95,8 @@ The interface consists of four main tabs:
    - Quality control test parameters
    - Diagnostic thresholds
    - Buffer control options
+   - Parameter configuration
+   - Apply Changes button
 
 ### Menu Bar
 - **File**: Layout export options, CSV layout import
@@ -215,23 +219,36 @@ Access via Analysis → Parameters to set:
 ### Diagnosis Setup
 1. Configure control columns in the Diagnosis Options tab:
    - Positive Control: Define columns containing positive controls
-   - Negative Control: Define columns containing negative controls
-   - Buffer Control: Define columns containing buffer (optional)
+   - NTC Control (No Cells): Define columns containing negative (no cell) controls
    - Test Samples: Define columns containing test samples
+   - Define wells per column for ATP, Ionomycin, and Buffer conditions
 
-2. Configure quality control tests:
+2. Configure quality control test parameters:
+   - **IMPORTANT**: After changing any test parameters, click the "Apply Parameter Changes" button
+   - Changes will not take effect until they are applied
+   - A confirmation message will appear when changes are successfully applied
+   - All parameter changes are stored for the current session
+
+3. Configure quality control tests:
    - Injection Artifact Tests
-   - Raw Data Tests
-   - ΔF/F₀ Tests
-   - Control Tests
+   - Raw Data Tests (baseline min/max/mean/sd)
+   - ΔF/F₀ Tests (baseline deviation, peak height/width)
+   - Control Tests (positive control, NTC, buffer responses)
    
-3. Set diagnostic threshold:
-   - Autism Risk Threshold: Define the normalized ATP response threshold
+4. Set diagnostic threshold:
+   - Choose threshold type (Ionomycin or Positive Control normalized)
+   - Set Autism Risk Threshold percentage value
 
 ### Running Diagnosis
 1. Enable "Generate Diagnosis" in the Analysis tab
-2. Process data (diagnosis runs automatically)
-3. View results in the Analysis tab and Diagnosis plot
+2. Ensure all parameter changes have been applied
+3. Process data (diagnosis runs automatically)
+4. View results in the Analysis tab and Diagnosis plot
+
+### Parameter Testing
+1. For troubleshooting, use the "Test Raw Baseline Min Parameter" button
+2. This displays the current parameter value and verifies it's stored correctly
+3. You can run a test with this parameter to verify behavior
 
 ### Quality Control
 - Tests validate data quality before diagnosis
@@ -310,7 +327,7 @@ Creates a workbook with multiple sheets:
    - Quality metrics
 
 7. **Diagnosis Results** (when diagnosis is enabled)
-   - Diagnosis configuration
+   - Diagnosis configuration including current parameter values
    - Sample-specific diagnostic results
    - Quality control test results
    - Color-coded pass/fail indicators
@@ -344,8 +361,16 @@ Creates a workbook with multiple sheets:
    - Check for overlapping column definitions
    - Verify ionomycin wells are properly labeled
    - Make sure quality control thresholds are appropriate
+   - **IMPORTANT**: Confirm parameter changes were applied before running diagnosis
+   - Use the "Test Raw Baseline Min" button to verify parameters are being stored
 
-5. **Export Errors**
+5. **Parameter Changes Not Applied**
+   - Always use the "Apply Parameter Changes" button after modifying test parameters
+   - Look for the confirmation message after applying changes
+   - Verify the parameter values in the confirmation dialog
+   - Re-enable diagnosis generation if it was disabled
+
+6. **Export Errors**
    - Check file permissions
    - Close existing Excel files
    - Verify available disk space
@@ -353,6 +378,7 @@ Creates a workbook with multiple sheets:
 ### Error Messages
 - Detailed error messages in status bar
 - Log file for debugging
+- Parameter values are logged when applied
 - Contact support for assistance
 
 ### Support
@@ -377,7 +403,9 @@ For additional support or to report issues:
    - Validate control columns carefully
    - Check for overlapping column definitions
    - Fine-tune quality control thresholds
+   - Apply parameter changes before running diagnosis
    - Save diagnostic configurations as templates
+   - Test parameter changes with simplified datasets
 
 4. **Quality Control**
    - Check baseline stability

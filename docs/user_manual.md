@@ -99,7 +99,12 @@ When you first launch the FLIPR Analysis Tool, follow these steps to configure y
      - Baseline frames
      - Peak detection parameters
 
-2. **Configure Default Colors**
+2. **Configure Diagnosis Options** (if using diagnostic features)
+   - Go to the Diagnosis Options tab
+   - Configure control columns and test parameters
+   - Click "Apply Parameter Changes" to save settings
+
+3. **Configure Default Colors**
    - Default colors are used for automatic group assignment
    - Custom colors can be selected for each experiment
 
@@ -386,10 +391,16 @@ In the Analysis tab, several processing options are available:
    - When enabled, responses are normalized to ionomycin
    - Groups by Sample ID to match samples with their ionomycin controls
 
-3. **Diagnosis Generation**
+3. **Positive Control Normalization**
+   - Toggle "Normalize to Positive Control" checkbox
+   - When enabled, responses are normalized to positive control
+   - Requires Ionomycin normalization to be enabled first
+
+4. **Diagnosis Generation**
    - Toggle "Generate Diagnosis" checkbox
    - When enabled, diagnostic analysis is performed
    - Requires Ionomycin normalization
+   - Uses parameters from Diagnosis Options tab
 
 ### Viewing Results
 
@@ -461,13 +472,18 @@ The Summary Plots window includes multiple tabs:
    - Only available when normalization is enabled
    - Adjusts for differences in loading and expression
 
-7. **Diagnosis**
+7. **Normalized to Positive Control**
+   - Bar chart showing responses as percentage of positive control
+   - Only available when positive control normalization is enabled
+   - Useful for cross-experiment comparisons
+
+8. **Diagnosis**
    - Bar chart showing normalized ATP responses
    - Includes threshold line for autism risk
    - Color-coded by diagnostic outcome
    - Only available when diagnosis is enabled
 
-8. **Plot Settings**
+9. **Plot Settings**
    - Controls for customizing plot appearance
    - Adjust axis labels, scales, and formatting
 
@@ -492,34 +508,90 @@ Each plot window includes controls for customization:
 
 ## Diagnosis Mode
 
-### Overview
+The diagnosis mode provides clinical assessment capabilities based on calcium response patterns.
 
-The diagnosis mode provides clinical assessment capabilities based on calcium response patterns. For detailed instructions, refer to the separate [Diagnostic Mode User Guide](#).
+### Configuration
 
-### Basic Setup
+1. **Control Column Assignment**
+   - Navigate to the Diagnosis Options tab
+   - **Test Samples**: Define column range containing test samples
+   - **NTC Control**: Define column(s) containing No-Cell Control
+   - **Positive Control**: Define column(s) containing reference samples
+   - Check for column conflicts (highlighted in red if overlapping)
 
-1. **Configure Control Columns**
-   - Navigate to Diagnosis Options tab
-   - Specify columns for positive controls, negative controls, buffer controls, and test samples
-   - Check for any overlapping column assignments
+2. **Well Layout Configuration**
+   - Set number of ATP wells per column (typically 3)
+   - Set number of Ionomycin wells per column (typically 3)
+   - Set number of Buffer wells per column (typically 2)
+   - Total wells should not exceed 8 (warning appears if exceeded)
 
-2. **Set Quality Control Parameters**
-   - Configure thresholds for each quality control test
-   - Adjust based on your established protocol
-   - Save configuration as template for consistency
+3. **Diagnostic Threshold Setup**
+   - Select threshold type:
+     - **Ionomycin-Normalized ATP Response**: Normalizes to maximum calcium signal
+     - **Positive Control-Normalized ATP Response**: Normalizes to reference sample
+   - Set Autism Risk Threshold percentage (default: 20%)
+   - Values below threshold indicate positive risk
 
-3. **Run Diagnosis**
-   - In Analysis tab, check "Generate Diagnosis"
-   - Process data (automatically runs diagnostic tests)
-   - Review results in text area and Diagnosis plot tab
+### Quality Control Test Parameters
+
+The Diagnosis tab contains multiple test parameter sections:
+
+1. **NTC Tests**
+   - **Maximum Baseline Value**: Upper limit for NTC baseline signal
+   - **Maximum Response**: Maximum allowable NTC response
+
+2. **Buffer Tests**
+   - **Maximum Response**: Maximum allowable buffer response
+   - **Maximum % of ATP Response**: Buffer/ATP ratio threshold
+
+3. **Test Configuration Panel**
+   - Each test has a checkbox to enable/disable it
+   - Parameter fields for customizing test thresholds
+   - Grouped by category (Injection Artifact, Raw Data, ΔF/F₀, Controls)
+
+4. **Applying Parameter Changes**
+   - **IMPORTANT**: After changing any parameters, click the "Apply Parameter Changes" button
+   - A confirmation message will appear when changes are successfully applied
+   - Parameters will not take effect until applied
+   - You can test parameter updates with the "Test Raw Baseline Min Parameter" button
+
+### Running Diagnosis
+
+1. In the Analysis tab, enable "Generate Diagnosis" checkbox
+2. Ensure that Ionomycin Normalization is also enabled (automatically checked)
+3. Process the data (automatically runs diagnostic tests)
+4. Review diagnosis results in:
+   - Results text area
+   - Diagnosis tab in Summary Plots window
 
 ### Interpreting Results
 
 Diagnosis results include:
-- POSITIVE/NEGATIVE/INVALID status for each sample
-- Normalized ATP response values
-- Quality control test outcomes
-- Color-coded visualization in Diagnosis plot
+
+1. **Sample Status**
+   - **POSITIVE**: ATP response below threshold (indicates autism risk)
+   - **NEGATIVE**: ATP response above threshold (normal response)
+   - **INVALID**: Failed quality control tests or missing data
+
+2. **Numerical Values**
+   - Normalized ATP response as percentage
+   - Comparison to threshold value
+   - Quality control test results
+
+3. **Visual Representation**
+   - Bar chart in Diagnosis tab
+   - Color-coded by status (red=positive, green=negative, gray=invalid)
+   - Threshold line shown for reference
+
+### Saving Diagnosis Configurations
+
+To maintain consistent diagnostic parameters:
+
+1. Configure all test parameters as needed
+2. Click "Apply Parameter Changes" to ensure settings are active
+3. Click "Save Configuration" button
+4. Choose location and filename for configuration file (.json)
+5. Load configuration in future sessions using "Load Configuration"
 
 ## Exporting Results
 
@@ -568,10 +640,11 @@ The exported Excel file includes these worksheets:
    - Quality metrics
 
 7. **Diagnosis Results** (when diagnosis is enabled)
-   - Diagnosis configuration
+   - Diagnosis configuration with all test parameters
    - Sample-specific diagnostic results
-   - Quality control test results
-   - Color-coded pass/fail indicators
+   - Quality control test results with pass/fail indicators
+   - Control data analysis
+   - Positive control and NTC control measurements
 
 ### FLIPR Format Export
 
@@ -614,6 +687,11 @@ To export plate layout back to FLIPR:
    - Use consistent file naming for easier data management
    - Save layouts for reuse across multiple plates
 
+4. **Diagnostic Parameter Management**
+   - Create parameter templates for different experiment types
+   - Document parameter values in lab protocols for consistency
+   - Use "Apply Parameter Changes" button after bulk parameter modifications
+
 ## Troubleshooting
 
 ### Common Issues
@@ -633,7 +711,18 @@ To export plate layout back to FLIPR:
    - **Solution**: Check baseline stability and ionomycin responses
    - **Prevention**: Use consistent baseline frames
 
-4. **Export Failures**
+4. **Diagnosis Parameters Not Applied**
+   - **Issue**: Changes to test parameters not reflected in results
+   - **Solution**: Click "Apply Parameter Changes" button after making changes
+   - **Prevention**: Look for confirmation message when applying changes
+   - **Verification**: Use "Test Raw Baseline Min Parameter" button to check current value
+
+5. **All Samples Showing Invalid Diagnosis**
+   - **Issue**: No valid diagnosis results generated
+   - **Solution**: Review failed QC tests, check control well assignments
+   - **Prevention**: Set appropriate thresholds for your experimental system
+
+6. **Export Failures**
    - **Issue**: Excel export fails
    - **Solution**: Close any open Excel files, check permissions
    - **Prevention**: Save regularly during analysis
@@ -649,6 +738,33 @@ Common error messages and their resolutions:
 | "Well not found in data" | Well reference mismatch | Ensure well IDs match between layout and data |
 | "Memory error" | File too large | Reduce file size or increase available memory |
 | "Permission denied" | File access issue | Check file permissions and close other programs |
+| "Could not access diagnosis configuration" | Parameter access issue | Restart application, apply changes before diagnosis |
+| "Missing ionomycin response" | Well labeling issue | Ensure ionomycin wells are properly labeled |
+| "No positive control data available" | Missing/mislabeled control | Check positive control column configuration |
+
+### Diagnosis Troubleshooting
+
+For diagnosis-specific issues:
+
+1. **Verify Well Labeling**
+   - Ensure ATP, Ionomycin, and Buffer wells are correctly labeled
+   - Verify Sample IDs match between ATP and Ionomycin wells
+   - Check positive and NTC control column assignments
+
+2. **Check Test Parameters**
+   - Review failed test messages in results display
+   - Adjust test parameters to match your experimental system
+   - Ensure parameters were applied with "Apply Parameter Changes" button
+
+3. **Control Response Verification**
+   - Inspect raw traces for NTC and buffer wells (should show minimal response)
+   - Check ionomycin responses (should show robust signal)
+   - Verify positive control responses are consistent
+
+4. **Parameter Debugging**
+   - Use "Test Raw Baseline Min Parameter" to verify parameter storage
+   - Temporarily disable problematic tests to isolate issues
+   - Reset to defaults and reapply changes if necessary
 
 ### Getting Support
 
@@ -669,6 +785,7 @@ If you encounter persistent issues:
 - **ΔF/F₀**: Normalized calcium response (change in fluorescence/baseline)
 - **FWHM**: Full Width at Half Maximum, measure of peak width
 - **Ionomycin**: Calcium ionophore used for maximum response calibration
+- **NTC**: No-Cell Control, wells without cells to measure background
 - **SEM**: Standard Error of the Mean, statistical measure of variability
 - **Time to Peak**: Time from compound addition to maximum response
 
@@ -692,6 +809,45 @@ If you encounter persistent issues:
   ```
   Used to assess replicate consistency
 
+- **Ionomycin Normalization**:
+  ```
+  Normalized Response = (ATP Peak ΔF/F₀ / Ionomycin Peak ΔF/F₀) × 100%
+  ```
+  Accounts for differences in cell density and dye loading
+
+- **Positive Control Normalization**:
+  ```
+  PC-Normalized Response = (Ionomycin-Normalized Response / Positive Control Response) × 100%
+  ```
+  Facilitates comparison across experiments
+
+### Quality Control Test Descriptions
+
+The diagnosis system includes multiple quality control tests:
+
+1. **Raw Baseline Tests**
+   - **check_raw_baseline_min**: Ensures raw baseline is above detection threshold
+   - **check_raw_baseline_max**: Confirms baseline is below saturation level
+   - **check_raw_baseline_mean**: Verifies baseline is within optimal range
+   - **check_raw_baseline_sd**: Validates baseline stability
+
+2. **ΔF/F₀ Tests**
+   - **check_dff_baseline**: Ensures normalized baseline is near zero
+   - **check_dff_return**: Validates return to baseline after response
+   - **check_peak_height**: Confirms response magnitude is reasonable
+   - **check_peak_width**: Checks response duration
+
+3. **Control Tests**
+   - **check_ntc_baseline**: Ensures no-cell controls have low background
+   - **check_ntc_response**: Confirms no-cell controls show no response
+   - **check_buffer**: Validates buffer controls show minimal response
+   - **check_pos_control**: Ensures positive control shows appropriate response
+
+4. **Experimental Tests**
+   - **check_ionomycin**: Validates maximum calcium response
+   - **check_atp**: Confirms ATP response is detectable and consistent
+   - **check_replicates**: Validates replicate consistency
+
 ### Keyboard Shortcuts
 
 | Action | Shortcut |
@@ -707,3 +863,4 @@ If you encounter persistent issues:
 | Show ΔF/F₀ Traces | Ctrl+2 |
 | Show Summary Plots | Ctrl+3 |
 | Reset View | Ctrl+R |
+| Apply Parameter Changes | Ctrl+P |
