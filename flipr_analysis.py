@@ -638,7 +638,8 @@ class SummaryPlotWindow(QMainWindow):
         self.auc_tab = QWidget()
         self.time_to_peak_tab = QWidget()
         self.normalized_tab = QWidget()
-        self.settings_tab = QWidget()  # New tab for plot settings
+        self.pc_normalized_tab = QWidget()  # New tab for positive control normalization
+        self.settings_tab = QWidget()  # Tab for plot settings
 
         self.tab_widget.addTab(self.individual_tab, "Individual Traces")
         self.tab_widget.addTab(self.mean_tab, "Mean Traces")
@@ -646,6 +647,7 @@ class SummaryPlotWindow(QMainWindow):
         self.tab_widget.addTab(self.auc_tab, "Area Under Curve")
         self.tab_widget.addTab(self.time_to_peak_tab, "Time to Peak")
         self.tab_widget.addTab(self.normalized_tab, "Normalized to Ionomycin")
+        self.tab_widget.addTab(self.pc_normalized_tab, "Normalized to Pos. Control")  # Add new tab
         self.tab_widget.addTab(self.settings_tab, "Plot Settings")
 
         # Create plot widgets using matplotlib canvas
@@ -666,6 +668,12 @@ class SummaryPlotWindow(QMainWindow):
         self.normalized_plot.axes.set_xlabel("Group")
         self.normalized_plot.axes.set_ylabel("Response (% Ionomycin)")
         self.normalized_plot.axes.tick_params(axis='x', rotation=45)
+
+        # Create new positive control normalized plot
+        self.pc_normalized_plot = MatplotlibCanvas()
+        self.pc_normalized_plot.axes.set_xlabel("Group")
+        self.pc_normalized_plot.axes.set_ylabel("Response (% Positive Control)")
+        self.pc_normalized_plot.axes.tick_params(axis='x', rotation=45)
 
         # Create plot widgets for AUC and Time to Peak
         self.auc_plot = MatplotlibCanvas()
@@ -702,6 +710,11 @@ class SummaryPlotWindow(QMainWindow):
         normalized_layout = QVBoxLayout(self.normalized_tab)
         normalized_layout.addWidget(self.normalized_plot)
         normalized_layout.addWidget(NavigationToolbar(self.normalized_plot, self.normalized_tab))
+
+        # Add layout for the new positive control normalized plot
+        pc_normalized_layout = QVBoxLayout(self.pc_normalized_tab)
+        pc_normalized_layout.addWidget(self.pc_normalized_plot)
+        pc_normalized_layout.addWidget(NavigationToolbar(self.pc_normalized_plot, self.pc_normalized_tab))
 
         # Add settings tab
         self.settings_panel = PlotSettingsTab(self)
@@ -745,6 +758,12 @@ class SummaryPlotWindow(QMainWindow):
         self.normalized_plot.axes.set_ylabel("Response (% Ionomycin)")
         self.normalized_plot.axes.tick_params(axis='x', rotation=45)
         self.normalized_plot.draw()
+
+        self.pc_normalized_plot.axes.clear()
+        self.pc_normalized_plot.axes.set_xlabel("Group")
+        self.pc_normalized_plot.axes.set_ylabel("Response (% Positive Control)")
+        self.pc_normalized_plot.axes.tick_params(axis='x', rotation=45)
+        self.pc_normalized_plot.draw()
 
         self.plot_items = {}
 
@@ -971,6 +990,7 @@ class WellPlateLabeler(QMainWindow):
 
         self.remove_artifact = False
         self.normalize_to_ionomycin = False
+        self.normalize_to_positive_control = False
         self.generate_diagnosis = False  # Add this line
         self.raw_plot_window = RawPlotWindow()
         self.dff_plot_window = DFFPlotWindow()
@@ -1465,6 +1485,13 @@ class WellPlateLabeler(QMainWindow):
         self.ionomycin_checkbox.stateChanged.connect(self.toggle_ionomycin_normalization)
         params_layout.addWidget(self.ionomycin_checkbox)
 
+        # Add new positive control normalization checkbox
+        self.positive_control_checkbox = QCheckBox("Normalize to Positive Control")
+        self.positive_control_checkbox.setChecked(self.normalize_to_positive_control)
+        self.positive_control_checkbox.stateChanged.connect(self.toggle_positive_control_normalization)
+        self.positive_control_checkbox.setEnabled(self.normalize_to_ionomycin)  # Only enable if ionomycin is checked
+        params_layout.addWidget(self.positive_control_checkbox)
+
         # Add diagnosis checkbox
         self.diagnosis_checkbox = QCheckBox("Generate Diagnosis")
         self.diagnosis_checkbox.setChecked(False)
@@ -1497,6 +1524,42 @@ class WellPlateLabeler(QMainWindow):
 
         analysis_tab.setLayout(analysis_layout)
         self.tab_widget.addTab(analysis_tab, "Analysis")
+
+
+    def toggle_positive_control_normalization(self, state):
+        """Toggle positive control normalization and update plots"""
+        self.normalize_to_positive_control = bool(state)
+        logger.info(f"Normalization to positive control set to: {self.normalize_to_positive_control}")
+
+        # If enabling positive control normalization but ionomycin normalization is off,
+        # show a warning and turn it off
+        if self.normalize_to_positive_control and not self.normalize_to_ionomycin:
+            self.normalize_to_positive_control = False
+            self.positive_control_checkbox.setChecked(False)
+            QMessageBox.warning(self, "Warning",
+                             "Normalization to positive control requires ionomycin normalization to be enabled.")
+            return
+
+        # If enabling positive control normalization, check if we can detect any positive controls
+        if self.normalize_to_positive_control and self.dff_data is not None:
+            positive_control_value = self.get_positive_control_responses()
+            if positive_control_value is None:
+                self.normalize_to_positive_control = False
+                self.positive_control_checkbox.setChecked(False)
+                QMessageBox.warning(self, "Warning",
+                                 "No positive control wells detected. Please make sure wells have 'Positive' in the label or sample ID.")
+                return
+
+        # Update analysis if we have data loaded
+        if self.dff_data is not None:
+            self.update_plots()
+            self.update_results_text()
+
+            # Update the summary plots too
+            if hasattr(self, 'summary_plot_window') and self.summary_plot_window.isVisible():
+                self.update_summary_plots()
+
+
 
     def update_results_text(self):
         """Update the results text display with summary statistics"""
@@ -1553,25 +1616,15 @@ class WellPlateLabeler(QMainWindow):
 
             # Add ionomycin normalization if enabled
             if self.normalize_to_ionomycin:
-                ionomycin_responses = self.get_ionomycin_responses()
-                if ionomycin_responses:
-                    normalized_peaks = []
-                    for well_id in well_ids:
-                        try:
-                            well_idx = next(idx for idx in range(96) if self.well_data[idx]["well_id"] == well_id)
-                            sample_id = self.well_data[well_idx].get("sample_id", "default")
-                            ionomycin_response = ionomycin_responses.get(sample_id)
-                            if ionomycin_response:
-                                peak = group_data.loc[well_id].max()
-                                normalized_peaks.append((peak / ionomycin_response) * 100)
-                        except (StopIteration, KeyError):
-                            # Skip if well not found
-                            continue
+                normalized_data = self.calculate_normalized_responses(group_name, well_ids)
+                if normalized_data:
+                    buffer.write(f"Normalized to Ionomycin: {normalized_data['mean']:.3f} ± {normalized_data['sem']:.3f} % of ionomycin\n")
 
-                    if normalized_peaks:
-                        norm_mean = np.mean(normalized_peaks)
-                        norm_sem = np.std(normalized_peaks) / np.sqrt(len(normalized_peaks))
-                        buffer.write(f"Normalized response: {norm_mean:.3f} ± {norm_sem:.3f} % of ionomycin\n")
+                    # Add positive control normalization if enabled
+                    if self.normalize_to_positive_control:
+                        pc_normalized_data = self.calculate_positive_control_normalized_responses(group_name, well_ids)
+                        if pc_normalized_data:
+                            buffer.write(f"Normalized to Positive Control: {pc_normalized_data['mean']:.3f} ± {pc_normalized_data['sem']:.3f} % of positive control\n")
 
             buffer.write("\n")
 
@@ -1597,7 +1650,15 @@ class WellPlateLabeler(QMainWindow):
             # Add diagnosis results
             buffer.write("Diagnosis Results:\n")
             for sample_id, diagnosis in self.diagnosis_results['diagnosis'].items():
-                buffer.write(f"  {sample_id}: {diagnosis['status']} - {diagnosis['message']}\n")
+                status_color = "gray"
+                if diagnosis['status'] == 'POSITIVE':
+                    status_color = "red"
+                elif diagnosis['status'] == 'NEGATIVE':
+                    status_color = "green"
+
+                buffer.write(f"  {sample_id}: <span style='color:{status_color};'>{diagnosis['status']}</span> - {diagnosis['message']}\n")
+
+            buffer.write("\n")
 
         # Update text display
         self.results_text.setText(buffer.getvalue())
@@ -1660,6 +1721,10 @@ class WellPlateLabeler(QMainWindow):
             if self.normalize_to_ionomycin:
                 self.create_normalized_sheet(wb)
 
+                # Add positive control normalized sheet if that option is enabled
+                if self.normalize_to_positive_control:
+                    self.create_positive_control_normalized_sheet(wb)
+
             # Add diagnosis worksheet if available
             if self.generate_diagnosis and hasattr(self, 'diagnosis_results') and self.diagnosis_results:
                 logger.info("Adding diagnosis worksheet to export")
@@ -1699,7 +1764,9 @@ class WellPlateLabeler(QMainWindow):
             "AUC (mean)", "AUC (SEM)"
         ]
         if self.normalize_to_ionomycin:
-            headers.extend(["Norm. Response (%)", "Norm. Response SEM"])
+            headers.extend(["Norm. to Ionomycin (%)", "Norm. to Ionomycin SEM"])
+            if self.normalize_to_positive_control:
+                headers.extend(["Norm. to Positive Control (%)", "Norm. to Positive Control SEM"])
 
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col, value=header)
@@ -1761,10 +1828,17 @@ class WellPlateLabeler(QMainWindow):
             ws.cell(row=row, column=current_col, value=round(float(group_auc.std() / np.sqrt(len(group_auc))), 3)); current_col += 1
 
             if self.normalize_to_ionomycin:
-                normalized_data = self.calculate_normalized_responses(group_name, well_ids)
-                if normalized_data:
-                    ws.cell(row=row, column=current_col, value=round(normalized_data['mean'], 3)); current_col += 1
-                    ws.cell(row=row, column=current_col, value=round(normalized_data['sem'], 3))
+                iono_normalized_data = self.calculate_normalized_responses(group_name, well_ids)
+                if iono_normalized_data:
+                    ws.cell(row=row, column=current_col, value=round(iono_normalized_data['mean'], 3)); current_col += 1
+                    ws.cell(row=row, column=current_col, value=round(iono_normalized_data['sem'], 3)); current_col += 1
+
+                    # Add positive control normalization data if enabled
+                    if self.normalize_to_positive_control:
+                        pc_normalized_data = self.calculate_positive_control_normalized_responses(group_name, well_ids)
+                        if pc_normalized_data:
+                            ws.cell(row=row, column=current_col, value=round(pc_normalized_data['mean'], 3)); current_col += 1
+                            ws.cell(row=row, column=current_col, value=round(pc_normalized_data['sem'], 3)); current_col += 1
 
             row += 1
 
@@ -1778,8 +1852,71 @@ class WellPlateLabeler(QMainWindow):
                         max_length = len(str(cell.value))
                 except:
                     pass
-            adjusted_width = (max_length + 2)
-            ws.column_dimensions[column[0].column_letter].width = adjusted_width
+                adjusted_width = (max_length + 2)
+                ws.column_dimensions[column[0].column_letter].width = adjusted_width
+
+
+    # Add a new method to create a specific positive control normalized sheet
+    def create_positive_control_normalized_sheet(self, wb):
+        """Create sheet with positive control-normalized data"""
+        if not (self.normalize_to_ionomycin and self.normalize_to_positive_control):
+            return
+
+        ws = wb.create_sheet("Positive_Control_Normalized")
+
+        # Add headers
+        headers = ["Group", "Well ID", "Concentration (µM)", "Normalized to Positive Control (%)",
+                  "Sample ID", "Ionomycin Response", "Positive Control Response (%)"]
+        for col, header in enumerate(headers, 1):
+            ws.cell(row=1, column=col, value=header)
+
+        # Get positive control value
+        positive_control_value = self.get_positive_control_responses()
+        if not positive_control_value:
+            ws.cell(row=2, column=1, value="No positive control data available")
+            return
+
+        # Add data
+        row = 2
+        grouped_data = self.group_data_by_metadata()
+        ionomycin_responses = self.get_ionomycin_responses()
+
+        for group_name, well_ids in grouped_data.items():
+            if "positive" in group_name.lower() or "ionomycin" in group_name.lower():
+                continue  # Skip positive control and ionomycin groups
+
+            for well_id in well_ids:
+                well_idx = next(idx for idx in range(96) if self.well_data[idx]["well_id"] == well_id)
+                concentration = self.well_data[well_idx].get("concentration", "").replace(" µM", "")
+                sample_id = self.well_data[well_idx].get("sample_id", "default")
+                ionomycin_response = ionomycin_responses.get(sample_id)
+
+                if ionomycin_response:
+                    peak = self.dff_data.loc[well_id].max()
+                    iono_normalized = (peak / ionomycin_response) * 100
+                    pc_normalized = (iono_normalized / positive_control_value) * 100
+
+                    ws.cell(row=row, column=1, value=group_name)
+                    ws.cell(row=row, column=2, value=well_id)
+                    ws.cell(row=row, column=3, value=concentration)
+                    ws.cell(row=row, column=4, value=float(pc_normalized))
+                    ws.cell(row=row, column=5, value=sample_id)
+                    ws.cell(row=row, column=6, value=float(ionomycin_response))
+                    ws.cell(row=row, column=7, value=float(positive_control_value))
+                    row += 1
+
+        # Auto-adjust column widths
+        for column in ws.columns:
+            max_length = 0
+            column = list(column)
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+                adjusted_width = (max_length + 2)
+                ws.column_dimensions[column[0].column_letter].width = adjusted_width
 
 
 
@@ -2153,8 +2290,141 @@ class WellPlateLabeler(QMainWindow):
     def toggle_ionomycin_normalization(self, state):
         """Toggle ionomycin normalization and update plots"""
         self.normalize_to_ionomycin = bool(state)
-        if self.raw_data is not None:
+
+        # Enable or disable the positive control normalization checkbox
+        self.positive_control_checkbox.setEnabled(self.normalize_to_ionomycin)
+
+        # If disabling ionomycin normalization, also disable positive control normalization
+        if not self.normalize_to_ionomycin and self.normalize_to_positive_control:
+            self.normalize_to_positive_control = False
+            self.positive_control_checkbox.setChecked(False)
+
+        if self.dff_data is not None:
+            self.update_plots()
             self.update_summary_plots()
+
+
+    def get_positive_control_responses(self):
+        """Calculate mean ionomycin-normalized response from wells labeled as Positive Control"""
+        if not self.normalize_to_ionomycin:
+            return None
+
+        # Find wells with "Positive" in the label, sample_id, or group name
+        positive_wells = []
+
+        # Step 1: Try to find wells with "Positive" in any field
+        for idx in range(96):
+            well_data = self.well_data[idx]
+            well_id = well_data["well_id"]
+
+            # Skip wells not in data
+            if well_id not in self.dff_data.index:
+                continue
+
+            # Check label field
+            label = well_data.get("label", "").lower()
+            sample_id = well_data.get("sample_id", "").lower()
+
+            # Check if "positive" appears in any field
+            if "positive" in label or "positive" in sample_id:
+                positive_wells.append(well_id)
+                logger.info(f"Found positive control well: {well_id} (label: {label}, sample_id: {sample_id})")
+
+        # Step 2: If no wells found, try to find group names with "Positive" in them
+        if not positive_wells:
+            logger.info("No wells with 'Positive' in label or sample_id found, checking group names...")
+
+            # Try to find groups with "Positive" in the name
+            grouped_data = self.group_data_by_metadata()
+            positive_groups = [name for name in grouped_data.keys() if "positive" in name.lower()]
+
+            for group_name in positive_groups:
+                logger.info(f"Found positive control group: {group_name}")
+                positive_wells.extend(grouped_data[group_name])
+
+        if not positive_wells:
+            logger.warning("No positive control wells found in any field")
+            return None
+
+        logger.info(f"Found {len(positive_wells)} positive control wells")
+
+        # Get ionomycin-normalized responses for these wells
+        ionomycin_responses = self.get_ionomycin_responses()
+        if not ionomycin_responses:
+            logger.warning("No ionomycin responses available")
+            return None
+
+        # Calculate peak responses for positive control wells
+        positive_control_values = []
+        for well_id in positive_wells:
+            try:
+                peak = self.dff_data.loc[well_id].max()
+                well_idx = next(idx for idx in range(96) if self.well_data[idx]["well_id"] == well_id)
+                sample_id = self.well_data[well_idx].get("sample_id", "default")
+                ionomycin_response = ionomycin_responses.get(sample_id)
+                if ionomycin_response:
+                    normalized_value = (peak / ionomycin_response) * 100
+                    positive_control_values.append(normalized_value)
+                    logger.info(f"Positive control well {well_id} normalized value: {normalized_value:.2f}%")
+            except (StopIteration, KeyError) as e:
+                logger.warning(f"Error processing positive control well {well_id}: {str(e)}")
+                continue
+
+        if not positive_control_values:
+            logger.warning("Failed to calculate any positive control normalized values")
+            return None
+
+        # Return the mean positive control response
+        mean_value = np.mean(positive_control_values)
+        logger.info(f"Mean positive control response: {mean_value:.2f}%")
+        return mean_value
+
+
+    def calculate_positive_control_normalized_responses(self, group_name, well_ids):
+        """Calculate responses normalized to both ionomycin and positive control"""
+        if not (self.normalize_to_ionomycin and self.normalize_to_positive_control):
+            return None
+
+        if "positive" in group_name.lower():
+            return {'mean': 100.0, 'sem': 0.0}  # Positive control itself is normalized to 100%
+
+        # Get positive control reference value
+        positive_control_value = self.get_positive_control_responses()
+        if not positive_control_value:
+            return None
+
+        # Calculate ionomycin-normalized responses
+        iono_normalized = self.calculate_normalized_responses(group_name, well_ids)
+        if not iono_normalized:
+            return None
+
+        # Normalize to positive control (set positive control to 100%)
+        pc_normalized_values = []
+        for well_id in well_ids:
+            try:
+                peak = self.dff_data.loc[well_id].max()
+                well_idx = next(idx for idx in range(96) if self.well_data[idx]["well_id"] == well_id)
+                sample_id = self.well_data[well_idx].get("sample_id", "default")
+                ionomycin_responses = self.get_ionomycin_responses()
+                ionomycin_response = ionomycin_responses.get(sample_id)
+
+                if ionomycin_response:
+                    iono_normalized_value = (peak / ionomycin_response) * 100
+                    pc_normalized_value = (iono_normalized_value / positive_control_value) * 100
+                    pc_normalized_values.append(pc_normalized_value)
+            except (StopIteration, KeyError):
+                continue
+
+        if not pc_normalized_values:
+            return None
+
+        # Calculate statistics
+        pc_normalized_values = np.array(pc_normalized_values)
+        return {
+            'mean': float(np.mean(pc_normalized_values)),
+            'sem': float(np.std(pc_normalized_values) / np.sqrt(len(pc_normalized_values)))
+        }
+
 
     def toggle_plot_window(self, plot_type):
         """Toggle visibility of specified plot window"""
@@ -2273,6 +2543,8 @@ class WellPlateLabeler(QMainWindow):
 
         # Plot traces for each group
         non_ionomycin_count = 0  # Counter for normalized plot positioning
+        pc_normalized_count = 0  # Counter for positive control normalized plot
+        positive_control_value = self.get_positive_control_responses() if self.normalize_to_positive_control else None
 
         # Prepare color map for groups
         group_colors = {}
@@ -2396,6 +2668,37 @@ class WellPlateLabeler(QMainWindow):
                                 fontsize=8
                             )
 
+                            # Add positive control normalized plot if enabled
+                            if self.normalize_to_positive_control and positive_control_value and positive_control_value > 0:
+                                # Skip for positive control group itself
+                                if not "positive" in group_name.lower():
+                                    # Calculate normalized to positive control values
+                                    pc_norm_mean = (norm_mean / positive_control_value) * 100
+                                    pc_norm_sem = (norm_sem / positive_control_value) * 100
+
+                                    # Add positive control normalized bar
+                                    self.summary_plot_window.pc_normalized_plot.axes.bar(
+                                        pc_normalized_count,
+                                        pc_norm_mean,
+                                        yerr=pc_norm_sem,
+                                        color=base_color,
+                                        capsize=5,
+                                        label=group_name if pc_normalized_count == 0 else None
+                                    )
+
+                                    # Add value label
+                                    self.summary_plot_window.pc_normalized_plot.axes.text(
+                                        pc_normalized_count,
+                                        pc_norm_mean + pc_norm_sem + 0.05 * pc_norm_mean,
+                                        f'{pc_norm_mean:.1f}±{pc_norm_sem:.1f}',
+                                        ha='center',
+                                        va='bottom',
+                                        color=base_color,
+                                        fontsize=8
+                                    )
+
+                                    pc_normalized_count += 1
+
                             non_ionomycin_count += 1  # Increment counter for next non-ionomycin group
 
                 # Calculate AUC for this group
@@ -2494,6 +2797,16 @@ class WellPlateLabeler(QMainWindow):
             self.summary_plot_window.normalized_plot.axes.set_xticklabels(non_ionomycin_groups)
             self.summary_plot_window.normalized_plot.axes.set_xlim(-0.5, len(non_ionomycin_groups) - 0.5)
 
+        # Set x-tick labels for positive control normalized plot
+        if self.normalize_to_positive_control and self.normalize_to_ionomycin:
+            pc_normalized_groups = [name for name in all_group_names
+                                  if "ionomycin" not in name.lower() and "positive" not in name.lower()]
+
+            if pc_normalized_groups:
+                self.summary_plot_window.pc_normalized_plot.axes.set_xticks(range(len(pc_normalized_groups)))
+                self.summary_plot_window.pc_normalized_plot.axes.set_xticklabels(pc_normalized_groups)
+                self.summary_plot_window.pc_normalized_plot.axes.set_xlim(-0.5, len(pc_normalized_groups) - 0.5)
+
         # Apply tight layout and draw all plots
         for plot in [
             self.summary_plot_window.individual_plot,
@@ -2501,14 +2814,14 @@ class WellPlateLabeler(QMainWindow):
             self.summary_plot_window.responses_plot,
             self.summary_plot_window.auc_plot,
             self.summary_plot_window.time_to_peak_plot,
-            self.summary_plot_window.normalized_plot
+            self.summary_plot_window.normalized_plot,
+            self.summary_plot_window.pc_normalized_plot
         ]:
             plot.fig.tight_layout()
             plot.draw()
 
         # Update the analysis results text display
         self.update_results_text()
-
 
     def open_file_dialog(self):
         """Open file dialog to load FLIPR data"""
@@ -2739,11 +3052,51 @@ class WellPlateLabeler(QMainWindow):
             logger.debug("Stack trace:", exc_info=True)
             raise
 
-    def get_row_col(self, index):
-        """Convert well index to row and column"""
-        row = index // 12  # 12 columns per row
-        col = index % 12
-        return row, col
+    def get_row_col(self, well_identifier):
+        """
+        Convert well identifier to row and column
+
+        Parameters:
+        well_identifier: Either a numeric index (0-95) or a well ID string (e.g., "A1")
+
+        Returns:
+        tuple: (row, col) where both are 0-based indices
+        """
+        if isinstance(well_identifier, str):
+            # Handle well ID format (e.g., "A1")
+            if not well_identifier or len(well_identifier) < 2:
+                return None, None
+
+            row = ord(well_identifier[0].upper()) - ord('A')  # Convert A->0, B->1, etc.
+            try:
+                col = int(well_identifier[1:]) - 1  # Convert 1->0, 2->1, etc.
+                return row, col
+            except ValueError:
+                logger.error(f"Invalid well ID format: {well_identifier}")
+                return None, None
+        else:
+            # Handle numeric index (0-95)
+            try:
+                index = int(well_identifier)
+                row = index // 12  # 12 columns per row
+                col = index % 12
+                return row, col
+            except (ValueError, TypeError):
+                logger.error(f"Invalid well index: {well_identifier}")
+                return None, None
+
+    def well_id_to_row_col(self, well_id):
+        """Convert well ID (e.g., 'A1') to row and column indices"""
+        if not well_id or len(well_id) < 2:
+            return None, None
+
+        row = ord(well_id[0].upper()) - ord('A')  # Convert A->0, B->1, etc.
+        try:
+            col = int(well_id[1:]) - 1  # Convert 1->0, 2->1, etc.
+            return row, col
+        except ValueError:
+            logger.error(f"Invalid well ID format: {well_id}")
+            return None, None
 
     def get_index(self, row, col):
         """Convert row and column to well index"""
@@ -3477,16 +3830,17 @@ class WellPlateLabeler(QMainWindow):
         self.metadata_tab = MetadataTab(self)
         self.tab_widget.addTab(self.metadata_tab, "Experiment Metadata")
 
+
     def create_experiment_summary_worksheet(self, wb):
         """Create comprehensive summary worksheet with one row per Sample ID"""
         ws = wb.create_sheet("Experiment Summary")
 
-        # Get metadata from the metadata tab (everything except Sample ID)
-        metadata = self.metadata_tab.get_metadata()
+        # Get column metadata
+        column_metadata = self.metadata_tab.get_column_metadata()
 
         # Define all the columns
         metadata_columns = [
-            "Accession ID", "Sample ID", "Aliquot", "Plate per run date",
+            "Column", "Accession ID", "Sample ID", "Aliquot", "Plate per run date",
             "Passage #", "Objective", "Experiment Date", "Media Type",
             "FBS Lot No", "Cell Density", "Time Frame", "Variable A",
             "Lab Operator", "Schmunk Ca2+ Signal", "Phenotype",
@@ -3507,30 +3861,54 @@ class WellPlateLabeler(QMainWindow):
             cell = ws.cell(row=1, column=col, value=header)
             cell.font = Font(bold=True)
 
-        # Get unique Sample IDs from plate layout
+        # Get unique Sample IDs from plate layout and track their columns
         unique_sample_ids = set()
+        sample_id_to_column = {}  # Track which column each Sample ID belongs to
+
         for idx in range(96):
             sample_id = self.well_data[idx].get("sample_id")
             if sample_id:
                 unique_sample_ids.add(sample_id)
+                # Get column (1-12) for this well
+                well_id = self.well_data[idx]["well_id"]
+
+                # Use the updated method to handle well IDs correctly
+                try:
+                    row, col = self.well_id_to_row_col(well_id)
+                    if row is not None and col is not None:
+                        col += 1  # Convert from 0-based to 1-based indexing
+                        sample_id_to_column[sample_id] = col
+                except Exception as e:
+                    logger.error(f"Error getting row/col for well {well_id}: {str(e)}")
+                    continue
 
         # If no Sample IDs found, create one row with default values
         if not unique_sample_ids:
             unique_sample_ids = [""]
+            sample_id_to_column[""] = 1
 
         logger.info(f"Found {len(unique_sample_ids)} unique Sample IDs: {', '.join(unique_sample_ids)}")
 
         # Create a row for each unique Sample ID
         current_row = 2
         for sample_id in sorted(unique_sample_ids):
-            # Write metadata values (same for all rows except Sample ID)
-            for col, field in enumerate(metadata_columns, 1):
+            # Get the column this sample ID belongs to
+            column = sample_id_to_column.get(sample_id, 1)
+
+            # Get metadata for this column
+            col_meta = column_metadata.get(column, {})
+
+            # Write column number
+            ws.cell(row=current_row, column=1, value=column)
+
+            # Write metadata values (including column-specific metadata)
+            for col, field in enumerate(metadata_columns[1:], 2):  # Start at 2 to skip Column
                 if field == "Sample ID":
                     # Sample ID comes from plate layout, not metadata
                     ws.cell(row=current_row, column=col, value=sample_id)
                 else:
-                    # All other fields come from metadata
-                    ws.cell(row=current_row, column=col, value=metadata.get(field, ""))
+                    # All other fields come from column metadata
+                    ws.cell(row=current_row, column=col, value=col_meta.get(field, ""))
 
             # Get wells with this Sample ID
             sample_wells = []
@@ -4018,15 +4396,37 @@ class WellPlateLabeler(QMainWindow):
                 ws.column_dimensions[column[0].column_letter].width = adjusted_width
 
 
+
+
 class MetadataTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
+        # Create a dictionary to store metadata for each column (1-12)
+        self.column_metadata = {col: {} for col in range(1, 13)}
+        self.current_column = 1  # Start with column 1 selected
         self.setup_ui()
 
     def setup_ui(self):
         # Main layout
         main_layout = QVBoxLayout(self)
+
+        # Add column selector at the top
+        column_selector_layout = QHBoxLayout()
+        column_selector_layout.addWidget(QLabel("Select Column:"))
+        self.column_dropdown = QComboBox()
+        for col in range(1, 13):
+            self.column_dropdown.addItem(f"Column {col}")
+        self.column_dropdown.currentIndexChanged.connect(self.on_column_changed)
+        column_selector_layout.addWidget(self.column_dropdown)
+
+        # Add "Copy to All Columns" button
+        self.copy_all_btn = QPushButton("Copy to All Columns")
+        self.copy_all_btn.clicked.connect(self.copy_to_all_columns)
+        column_selector_layout.addWidget(self.copy_all_btn)
+
+        # Add layout to main layout
+        main_layout.addLayout(column_selector_layout)
 
         # Create a scroll area for the form - this allows scrolling if the form is too long
         scroll_area = QScrollArea()
@@ -4089,25 +4489,89 @@ class MetadataTab(QWidget):
         main_layout.addWidget(scroll_area)
         main_layout.addLayout(button_layout)
 
-    def get_metadata(self):
-        """Get all metadata values as a dictionary"""
-        metadata = {}
+    def on_column_changed(self, index):
+        # Save current column metadata before switching
+        self.save_current_column_metadata()
+
+        # Update current column
+        self.current_column = index + 1  # +1 because combobox is 0-indexed
+
+        # Load metadata for the newly selected column
+        self.load_column_metadata()
+
+    def save_current_column_metadata(self):
+        # Save the current values to the current column's metadata
+        column_data = {}
         for field, widget in self.metadata_fields.items():
             if isinstance(widget, QTextEdit):
-                metadata[field] = widget.toPlainText()
+                column_data[field] = widget.toPlainText()
             else:
-                metadata[field] = widget.text()
-        return metadata
+                column_data[field] = widget.text()
+
+        self.column_metadata[self.current_column] = column_data
+
+    def load_column_metadata(self):
+        # Load metadata for the current column
+        column_data = self.column_metadata.get(self.current_column, {})
+
+        # Update the UI with the loaded metadata
+        for field, widget in self.metadata_fields.items():
+            value = column_data.get(field, "")
+            if isinstance(widget, QTextEdit):
+                widget.setPlainText(value)
+            else:
+                widget.setText(value)
+
+    def copy_to_all_columns(self):
+        # Save the current column first
+        self.save_current_column_metadata()
+
+        # Get the current column's metadata
+        current_data = self.column_metadata[self.current_column]
+
+        # Apply to all other columns
+        for col in range(1, 13):
+            if col != self.current_column:
+                self.column_metadata[col] = current_data.copy()
+
+        QMessageBox.information(self, "Copy Complete",
+                             f"Metadata from Column {self.current_column} has been copied to all other columns.")
+
+    def get_metadata(self):
+        """
+        Get metadata values for the whole experiment
+        This returns a merged version of all column metadata for backward compatibility
+        """
+        # Make sure current column is saved
+        self.save_current_column_metadata()
+
+        # For backward compatibility, return the first column's metadata
+        # In practice, methods should use get_column_metadata(col) instead
+        return self.column_metadata[1]
+
+    def get_column_metadata(self, column=None):
+        """Get metadata for a specific column or all columns if none specified"""
+        # Make sure current column is saved
+        self.save_current_column_metadata()
+
+        if column is not None:
+            return self.column_metadata.get(column, {})
+        return self.column_metadata
 
     def set_metadata(self, metadata):
         """Set metadata values from a dictionary"""
-        for field, value in metadata.items():
-            if field in self.metadata_fields:
-                widget = self.metadata_fields[field]
-                if isinstance(widget, QTextEdit):
-                    widget.setPlainText(value)
-                else:
-                    widget.setText(value)
+        if isinstance(metadata, dict):
+            # Check if it's the new format (column-based)
+            if any(isinstance(k, int) for k in metadata.keys()):
+                self.column_metadata = metadata
+            else:
+                # Legacy format (single metadata for whole plate)
+                # Apply to all columns
+                for col in range(1, 13):
+                    self.column_metadata[col] = metadata.copy()
+
+            # Update the UI with the current column's metadata
+            self.load_column_metadata()
 
     def save_template(self):
         """Save current metadata as a template"""
@@ -4118,8 +4582,11 @@ class MetadataTab(QWidget):
         )
         if file_path:
             try:
+                # Make sure current column is saved
+                self.save_current_column_metadata()
+
                 with open(file_path, 'w') as f:
-                    json.dump(self.get_metadata(), f, indent=2)
+                    json.dump(self.column_metadata, f, indent=2)
                 QMessageBox.information(self, "Success", "Metadata template saved successfully")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to save template: {str(e)}")
@@ -4134,19 +4601,36 @@ class MetadataTab(QWidget):
         if file_path:
             try:
                 with open(file_path, 'r') as f:
-                    metadata = json.load(f)
-                self.set_metadata(metadata)
+                    loaded_data = json.load(f)
+
+                # Handle legacy format
+                if not any(str(k).isdigit() for k in loaded_data.keys()):
+                    # Convert to new format
+                    new_format = {col: loaded_data.copy() for col in range(1, 13)}
+                    self.column_metadata = new_format
+                else:
+                    # Convert string keys to integers if needed
+                    if all(isinstance(k, str) for k in loaded_data.keys()):
+                        self.column_metadata = {int(k): v for k, v in loaded_data.items()}
+                    else:
+                        self.column_metadata = loaded_data
+
+                # Update UI
+                self.load_column_metadata()
                 QMessageBox.information(self, "Success", "Metadata template loaded successfully")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load template: {str(e)}")
 
     def clear_all(self):
-        """Clear all metadata fields"""
+        """Clear all metadata fields for current column"""
         for widget in self.metadata_fields.values():
             if isinstance(widget, QTextEdit):
                 widget.clear()
             else:
                 widget.clear()
+
+        # Clear the stored metadata for this column
+        self.column_metadata[self.current_column] = {}
 
 
 

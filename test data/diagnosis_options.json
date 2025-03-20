@@ -1,0 +1,101 @@
+{
+  "controls": {
+    "positive": [
+      12,
+      12
+    ],
+    "negative": [
+      11,
+      11
+    ],
+    "use_buffer": false,
+    "buffer": [
+      5,
+      6
+    ],
+    "samples": [
+      1,
+      10
+    ]
+  },
+  "thresholds": {
+    "autism_risk": 20.0
+  },
+  "tests": {
+    "check_artifact": {
+      "enabled": true,
+      "param1": 0.2,
+      "param2": 5.0
+    },
+    "check_raw_baseline_min": {
+      "enabled": true,
+      "param1": 100.0,
+      "param2": null
+    },
+    "check_raw_baseline_max": {
+      "enabled": true,
+      "param1": 5000.0,
+      "param2": null
+    },
+    "check_raw_baseline_mean": {
+      "enabled": true,
+      "param1": 500.0,
+      "param2": 3000.0
+    },
+    "check_raw_baseline_sd": {
+      "enabled": true,
+      "param1": 200.0,
+      "param2": null
+    },
+    "check_dff_baseline": {
+      "enabled": true,
+      "param1": 0.05,
+      "param2": null
+    },
+    "check_dff_return": {
+      "enabled": true,
+      "param1": 0.05,
+      "param2": 60.0
+    },
+    "check_peak_height": {
+      "enabled": true,
+      "param1": 0.1,
+      "param2": 3.0
+    },
+    "check_peak_width": {
+      "enabled": true,
+      "param1": 5.0,
+      "param2": 30.0
+    },
+    "check_auc": {
+      "enabled": true,
+      "param1": 1.0,
+      "param2": 100.0
+    },
+    "check_pos_control": {
+      "enabled": true,
+      "param1": 15.0,
+      "param2": 50.0
+    },
+    "check_neg_control": {
+      "enabled": true,
+      "param1": 3.0,
+      "param2": 15.0
+    },
+    "check_ionomycin": {
+      "enabled": true,
+      "param1": 1.0,
+      "param2": 20.0
+    },
+    "check_atp": {
+      "enabled": true,
+      "param1": 0.1,
+      "param2": 25.0
+    },
+    "check_replicates": {
+      "enabled": true,
+      "param1": 20.0,
+      "param2": null
+    }
+  }
+}
