@@ -4026,6 +4026,21 @@ class WellPlateLabeler(QMainWindow):
         self.diagnosis_tab = DiagnosisOptionsTab(self)
         self.tab_widget.addTab(self.diagnosis_tab, "Diagnosis Options")
 
+        # Store a direct reference to the diagnosis configuration
+        self.diagnosis_config = {}
+
+        # Add a direct update method
+        def update_diagnosis_config(self):
+            """Update the parent's stored diagnosis configuration"""
+            if hasattr(self, 'diagnosis_tab') and hasattr(self.diagnosis_tab, 'get_config'):
+                self.diagnosis_config = self.diagnosis_tab.get_config()
+                logger.info(f"Updated parent diagnosis config with raw_min={self.diagnosis_config['tests']['check_raw_baseline_min']['param1']}")
+                return True
+            return False
+
+        # Add the method to the class
+        self.update_diagnosis_config = update_diagnosis_config.__get__(self)
+
 
     def process_data(self):
         """Process loaded data with artifact removal if enabled"""
@@ -4092,22 +4107,41 @@ class WellPlateLabeler(QMainWindow):
             QMessageBox.critical(self, "Error", error_msg)
 
     def run_diagnosis(self):
-        """Run diagnostic tests"""
+        """Run diagnostic tests on the data"""
         logger.info("Starting run_diagnosis method")
         if self.dff_data is None:
-            logger.warning("No dff_data available for diagnosis")
-            return
+            logger.warning("No data available for diagnosis")
+            return False
 
         try:
+            # Force an update of the configuration
+            config_updated = False
+
+            if hasattr(self, 'update_diagnosis_config'):
+                logger.info("Updating diagnosis config via method")
+                config_updated = self.update_diagnosis_config()
+
+            # Check if we have a stored config
+            if hasattr(self, 'diagnosis_config') and self.diagnosis_config:
+                logger.info(f"Using stored diagnosis config with raw_min={self.diagnosis_config['tests']['check_raw_baseline_min']['param1']}")
+                config = self.diagnosis_config
+            elif hasattr(self, 'diagnosis_tab') and hasattr(self.diagnosis_tab, 'get_config'):
+                logger.info("Getting config directly from diagnosis tab")
+                config = self.diagnosis_tab.get_config()
+            else:
+                logger.warning("No access to diagnosis configuration, using None")
+                config = None
+
             # Initialize diagnostics class if needed
             if not hasattr(self, 'diagnostics'):
                 logger.info("Creating new DiagnosticTests instance")
                 self.diagnostics = DiagnosticTests(self)
 
-            # Run diagnosis
-            logger.info("Running diagnostics tests")
-            self.diagnosis_results = self.diagnostics.run_diagnosis()
+            # Run diagnosis with the explicit config
+            logger.info("Running diagnostics tests with explicit config")
+            self.diagnosis_results = self.diagnostics.run_diagnosis(config)
             logger.info(f"Diagnosis completed, results: {self.diagnosis_results is not None}")
+
 
             # Update diagnosis plot in summary window
             if self.diagnosis_results:
@@ -4120,12 +4154,15 @@ class WellPlateLabeler(QMainWindow):
                 logger.info("Updating diagnosis plot")
                 self.update_diagnosis_plot()
 
+            return True
+
         except Exception as e:
             logger.error(f"Error running diagnosis: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             QMessageBox.warning(self, "Diagnosis Error",
                              f"Failed to run diagnosis: {str(e)}")
+            return False
 
     def update_diagnosis_plot(self):
         """Update the diagnosis plot in the summary window"""
@@ -4766,11 +4803,61 @@ class MetadataTab(QWidget):
 
 
 class DiagnosisOptionsTab(QWidget):
-    """Tab for configuring diagnosis options and thresholds"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
+        self.logger = logging.getLogger(__name__)
+        # Add a direct update flag
+        self.parameters_modified = False
+
+        # Add a live configuration that updates when UI changes
+        self.live_config = {
+            'controls': {
+                'samples': (1, 10),
+                'ntc': (11, 11),
+                'positive': (12, 12)
+            },
+            'well_layout': {
+                'atp_wells': 3,
+                'iono_wells': 3,
+                'buffer_wells': 2
+            },
+            'ntc_tests': {
+                'max_baseline': 50.0,
+                'max_response': 0.05
+            },
+            'buffer_tests': {
+                'max_response': 0.1,
+                'max_pct_atp': 15.0
+            },
+            'thresholds': {
+                'type': "Positive Control-Normalized ATP Response",
+                'value': 20.0
+            },
+            'tests': {
+                'check_artifact': {'enabled': True, 'param1': 0.2, 'param2': 5},
+                'check_raw_baseline_min': {'enabled': True, 'param1': 100, 'param2': None},
+                'check_raw_baseline_max': {'enabled': True, 'param1': 5000, 'param2': None},
+                'check_raw_baseline_mean': {'enabled': True, 'param1': 500, 'param2': 3000},
+                'check_raw_baseline_sd': {'enabled': True, 'param1': 200, 'param2': None},
+                'check_dff_baseline': {'enabled': True, 'param1': 0.05, 'param2': None},
+                'check_dff_return': {'enabled': True, 'param1': 0.05, 'param2': 60},
+                'check_peak_height': {'enabled': True, 'param1': 0.1, 'param2': 3.0},
+                'check_peak_width': {'enabled': True, 'param1': 5, 'param2': 30},
+                'check_auc': {'enabled': True, 'param1': 1.0, 'param2': 100.0},
+                'check_pos_control': {'enabled': True, 'param1': 15, 'param2': 50},
+                'check_ntc_baseline': {'enabled': True, 'param1': 50, 'param2': None},
+                'check_ntc_response': {'enabled': True, 'param1': 0.05, 'param2': None},
+                'check_ionomycin': {'enabled': True, 'param1': 1.0, 'param2': 20},
+                'check_atp': {'enabled': True, 'param1': 0.1, 'param2': 25},
+                'check_buffer': {'enabled': True, 'param1': 0.1, 'param2': 15},
+                'check_replicates': {'enabled': True, 'param1': 20, 'param2': None}
+            }
+        }
+
         self.setup_ui()
+
+
 
     def setup_ui(self):
         # Main layout
@@ -5110,6 +5197,142 @@ class DiagnosisOptionsTab(QWidget):
         self.validate_column_selections()
         self.validate_well_count()
 
+        # Connect signals from UI elements to update live config
+        self.ntc_control_from.valueChanged.connect(self.update_live_config)
+        self.ntc_control_to.valueChanged.connect(self.update_live_config)
+        self.pos_control_from.valueChanged.connect(self.update_live_config)
+        self.pos_control_to.valueChanged.connect(self.update_live_config)
+        self.samples_from.valueChanged.connect(self.update_live_config)
+        self.samples_to.valueChanged.connect(self.update_live_config)
+
+        self.atp_wells.valueChanged.connect(self.update_live_config)
+        self.iono_wells.valueChanged.connect(self.update_live_config)
+        self.buffer_wells.valueChanged.connect(self.update_live_config)
+
+        self.ntc_max_baseline.valueChanged.connect(self.update_live_config)
+        self.ntc_max_response.valueChanged.connect(self.update_live_config)
+
+        self.buffer_max_response.valueChanged.connect(self.update_live_config)
+        self.buffer_max_pct_atp.valueChanged.connect(self.update_live_config)
+
+        self.threshold_type.currentIndexChanged.connect(self.update_live_config)
+        self.autism_threshold.valueChanged.connect(self.update_live_config)
+
+        # Connect all test parameter widgets
+        for test_id, widgets in self.test_widgets.items():
+            widgets['checkbox'].stateChanged.connect(lambda state, tid=test_id: self.update_test_config(tid))
+            widgets['param1_input'].valueChanged.connect(lambda value, tid=test_id: self.update_test_config(tid))
+            if widgets['param2_input']:
+                widgets['param2_input'].valueChanged.connect(lambda value, tid=test_id: self.update_test_config(tid))
+
+        # Add a visible "Apply Changes" button at the top of the form
+        apply_button = QPushButton("Apply Parameter Changes")
+        apply_button.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        apply_button.clicked.connect(self.apply_parameter_changes)
+        main_layout.insertWidget(0, apply_button)  # Add at the top
+
+        # Add a test button for raw_baseline_min
+        test_button = QPushButton("Test Raw Baseline Min Parameter")
+        test_button.clicked.connect(self.test_raw_baseline_min)
+        main_layout.addWidget(test_button)
+
+
+
+    def test_raw_baseline_min(self):
+        """Test function for the raw baseline min parameter"""
+        # Get the current value from UI
+        current_value = self.test_widgets['check_raw_baseline_min']['param1_input'].value()
+
+        # Update the config
+        self.update_live_config()
+
+        # Log values
+        self.logger.info(f"UI value: {current_value}")
+        self.logger.info(f"Config value: {self.live_config['tests']['check_raw_baseline_min']['param1']}")
+
+        # Update parent if possible
+        if hasattr(self.parent, 'diagnosis_config'):
+            self.parent.diagnosis_config = self.live_config.copy()
+            self.logger.info(f"Parent config updated: {self.parent.diagnosis_config['tests']['check_raw_baseline_min']['param1']}")
+
+        # Show message
+        QMessageBox.information(self, "Parameter Test",
+                              f"Raw baseline min: {current_value}")
+
+
+
+
+    def apply_parameter_changes(self):
+        """Force an update of parameters"""
+        self.update_live_config()
+
+        # Log the values to verify they're updated
+        self.logger.info(f"Applied changes - Raw baseline min: {self.live_config['tests']['check_raw_baseline_min']['param1']}")
+
+        # Update parent's config if possible
+        if hasattr(self.parent, 'diagnosis_config'):
+            self.parent.diagnosis_config = self.live_config.copy()
+            self.logger.info("Updated parent's config directly")
+
+        if hasattr(self.parent, 'update_diagnosis_config'):
+            self.parent.update_diagnosis_config()
+            self.logger.info("Called parent's update method")
+
+        # Show confirmation
+        QMessageBox.information(self, "Parameters Updated",
+                              "Configuration updated. Changes will be applied in the next diagnosis run.")
+
+
+    def update_live_config(self):
+        """Update live configuration from UI elements"""
+        # Update control columns
+        self.live_config['controls'] = {
+            'samples': (self.samples_from.value(), self.samples_to.value()),
+            'ntc': (self.ntc_control_from.value(), self.ntc_control_to.value()),
+            'positive': (self.pos_control_from.value(), self.pos_control_to.value())
+        }
+
+        # Update well layout
+        self.live_config['well_layout'] = {
+            'atp_wells': self.atp_wells.value(),
+            'iono_wells': self.iono_wells.value(),
+            'buffer_wells': self.buffer_wells.value()
+        }
+
+        # Update NTC tests
+        self.live_config['ntc_tests'] = {
+            'max_baseline': self.ntc_max_baseline.value(),
+            'max_response': self.ntc_max_response.value()
+        }
+
+        # Update buffer tests
+        self.live_config['buffer_tests'] = {
+            'max_response': self.buffer_max_response.value(),
+            'max_pct_atp': self.buffer_max_pct_atp.value()
+        }
+
+        # Update thresholds
+        self.live_config['thresholds'] = {
+            'type': self.threshold_type.currentText(),
+            'value': self.autism_threshold.value()
+        }
+
+    def update_test_config(self, test_id):
+        """Update a specific test's configuration"""
+        if test_id not in self.test_widgets:
+            return
+
+        widgets = self.test_widgets[test_id]
+        self.live_config['tests'][test_id] = {
+            'enabled': widgets['checkbox'].isChecked(),
+            'param1': widgets['param1_input'].value(),
+            'param2': widgets['param2_input'].value() if widgets['param2_input'] else None
+        }
+
+        # Optional: Debug log for the specific test update
+        self.logger.debug(f"Updated test config: {test_id} = {self.live_config['tests'][test_id]}")
+
+
     def update_threshold_description(self):
         """Update the threshold description based on selected type"""
         threshold_type = self.threshold_type.currentText()
@@ -5175,48 +5398,20 @@ class DiagnosisOptionsTab(QWidget):
 
     def get_config(self):
         """Get the current diagnosis configuration"""
-        config = {
-            'controls': {
-                'samples': (self.samples_from.value(), self.samples_to.value()),
-                'ntc': (self.ntc_control_from.value(), self.ntc_control_to.value()),
-                'positive': (self.pos_control_from.value(), self.pos_control_to.value())
-            },
-            'well_layout': {
-                'atp_wells': self.atp_wells.value(),
-                'iono_wells': self.iono_wells.value(),
-                'buffer_wells': self.buffer_wells.value()
-            },
-            'ntc_tests': {
-                'max_baseline': self.ntc_max_baseline.value(),
-                'max_response': self.ntc_max_response.value()
-            },
-            'buffer_tests': {
-                'max_response': self.buffer_max_response.value(),
-                'max_pct_atp': self.buffer_max_pct_atp.value()
-            },
-            'thresholds': {
-                'type': self.threshold_type.currentText(),
-                'value': self.autism_threshold.value()
-            },
-            'tests': {}
-        }
+        # Force an update of the live configuration
+        self.update_live_config()
 
-        # Get test configurations
-        for test_id, widgets in self.test_widgets.items():
-            enabled = widgets['checkbox'].isChecked()
-            param1 = widgets['param1_input'].value()
-            param2 = widgets['param2_input'].value() if widgets['param2_input'] else None
+        # Log test parameter values to confirm they're being returned correctly
+        self.logger.info(f"get_config - Raw baseline min: {self.live_config['tests']['check_raw_baseline_min']['param1']}")
 
-            config['tests'][test_id] = {
-                'enabled': enabled,
-                'param1': param1,
-                'param2': param2
-            }
-
-        return config
+        return self.live_config
 
     def set_config(self, config):
         """Set diagnosis configuration from a dictionary"""
+        # Store the loaded config
+        self.live_config = config
+
+        # Now update the UI elements
         try:
             # Set control columns
             controls = config.get('controls', {})
@@ -5368,7 +5563,6 @@ class DiagnosisOptionsTab(QWidget):
 
 
 
-# Update this class to implement the new diagnostic approach
 class DiagnosticTests:
     """Class to perform diagnostic tests on FLIPR data"""
 
@@ -5376,21 +5570,97 @@ class DiagnosticTests:
         self.parent = parent
         self.logger = logging.getLogger(__name__)
 
-    def run_diagnosis(self):
+    def run_diagnosis(self, provided_config=None):
         """Run all diagnostic tests and return results"""
         if self.parent.dff_data is None or not self.parent.normalize_to_ionomycin:
             return None
 
         self.logger.info("Running diagnostic tests")
 
-        # Get diagnosis configuration
-        config = self.parent.diagnosis_tab.get_config()
+        # ALWAYS use the provided config if available
+        if provided_config is not None:
+            config = provided_config.copy()  # Make a copy to avoid modifying the original
+            self.logger.info(f"Using provided config with raw_min={config['tests']['check_raw_baseline_min']['param1']}")
+        else:
+            try:
+                if hasattr(self.parent, 'diagnosis_tab') and hasattr(self.parent.diagnosis_tab, 'get_config'):
+                    config = self.parent.diagnosis_tab.get_config()
+                    self.logger.info("Successfully retrieved diagnosis configuration")
+                else:
+                    self.logger.warning("Could not access diagnosis configuration, using defaults")
+                    # Use default configuration
+                    config = {
+                        'controls': {
+                            'samples': (1, 10),
+                            'ntc': (11, 11),
+                            'positive': (12, 12)
+                        },
+                        'well_layout': {
+                            'atp_wells': 3,
+                            'iono_wells': 3,
+                            'buffer_wells': 2
+                        },
+                        'ntc_tests': {
+                            'max_baseline': 50.0,
+                            'max_response': 0.05
+                        },
+                        'buffer_tests': {
+                            'max_response': 0.1,
+                            'max_pct_atp': 15.0
+                        },
+                        'thresholds': {
+                            'type': "Positive Control-Normalized ATP Response",
+                            'value': 20.0
+                        },
+                        'tests': {
+                            'check_artifact': {'enabled': True, 'param1': 0.2, 'param2': 5},
+                            'check_raw_baseline_min': {'enabled': True, 'param1': 100, 'param2': None},
+                            'check_raw_baseline_max': {'enabled': True, 'param1': 5000, 'param2': None},
+                            'check_raw_baseline_mean': {'enabled': True, 'param1': 500, 'param2': 3000},
+                            'check_raw_baseline_sd': {'enabled': True, 'param1': 200, 'param2': None},
+                            'check_dff_baseline': {'enabled': True, 'param1': 0.05, 'param2': None},
+                            'check_dff_return': {'enabled': True, 'param1': 0.05, 'param2': 60},
+                            'check_peak_height': {'enabled': True, 'param1': 0.1, 'param2': 3.0},
+                            'check_peak_width': {'enabled': True, 'param1': 5, 'param2': 30},
+                            'check_auc': {'enabled': True, 'param1': 1.0, 'param2': 100.0},
+                            'check_pos_control': {'enabled': True, 'param1': 15, 'param2': 50},
+                            'check_ntc_baseline': {'enabled': True, 'param1': 50, 'param2': None},
+                            'check_ntc_response': {'enabled': True, 'param1': 0.05, 'param2': None},
+                            'check_ionomycin': {'enabled': True, 'param1': 1.0, 'param2': 20},
+                            'check_atp': {'enabled': True, 'param1': 0.1, 'param2': 25},
+                            'check_buffer': {'enabled': True, 'param1': 0.1, 'param2': 15},
+                            'check_replicates': {'enabled': True, 'param1': 20, 'param2': None}
+                        }
+                    }
+            except Exception as e:
+                self.logger.error(f"Error getting diagnosis configuration: {str(e)}")
+                # Use a simplified default configuration
+                config = {
+                    'controls': {
+                        'samples': (1, 10),
+                        'ntc': (11, 11),
+                        'positive': (12, 12)
+                    },
+                    'thresholds': {
+                        'type': "Positive Control-Normalized ATP Response",
+                        'value': 20.0
+                    }
+                }
+
+        # Log the configuration for debugging
+        self.logger.info(f"Using controls configuration: {config.get('controls', {})}")
+        if 'ntc_tests' in config:
+            self.logger.info(f"Using NTC test parameters: {config['ntc_tests']}")
+        if 'buffer_tests' in config:
+            self.logger.info(f"Using buffer test parameters: {config['buffer_tests']}")
+        if 'tests' in config:
+            self.logger.info(f"Found {len(config['tests'])} test configurations")
 
         # Extract plate regions
-        controls = config['controls']
-        sample_cols = range(controls['samples'][0]-1, controls['samples'][1])
-        ntc_cols = range(controls['ntc'][0]-1, controls['ntc'][1])
-        pos_control_cols = range(controls['positive'][0]-1, controls['positive'][1])
+        controls = config.get('controls', {})
+        sample_cols = range(controls.get('samples', (1, 10))[0]-1, controls.get('samples', (1, 10))[1])
+        ntc_cols = range(controls.get('ntc', (11, 11))[0]-1, controls.get('ntc', (11, 11))[1])
+        pos_control_cols = range(controls.get('positive', (12, 12))[0]-1, controls.get('positive', (12, 12))[1])
 
         # Extract well layout information
         well_layout = config.get('well_layout', {})
@@ -5514,19 +5784,82 @@ class DiagnosticTests:
         # Run diagnostic tests
         test_results = {}
 
-        # Run each enabled test
-        for test_id, test_config in config['tests'].items():
-            if not test_config['enabled']:
-                continue
+        # Run each enabled test - Now with DIRECT test execution
+        if 'tests' in config:
+            for test_id, test_config in config['tests'].items():
+                if not test_config['enabled']:
+                    continue
 
-            result = self.run_test(
-                test_id,
-                test_config['param1'],
-                test_config['param2'],
-                results,
-                config
-            )
-            test_results[test_id] = result
+                # Get the parameter values directly from config
+                param1 = test_config['param1']
+                param2 = test_config['param2']
+
+                # Log the parameters for debugging
+                self.logger.info(f"Running test {test_id} with params: {param1}, {param2}")
+
+                # Apply specific parameter overrides for special cases
+                if test_id == 'check_ntc_baseline' and 'ntc_tests' in config:
+                    param1 = config['ntc_tests'].get('max_baseline', param1)
+                    self.logger.info(f"Using NTC baseline max value: {param1}")
+                elif test_id == 'check_ntc_response' and 'ntc_tests' in config:
+                    param1 = config['ntc_tests'].get('max_response', param1)
+                    self.logger.info(f"Using NTC response max value: {param1}")
+                elif test_id == 'check_buffer' and 'buffer_tests' in config:
+                    param1 = config['buffer_tests'].get('max_response', param1)
+                    param2 = config['buffer_tests'].get('max_pct_atp', param2)
+                    self.logger.info(f"Using buffer test params: {param1}, {param2}")
+
+                # Execute the appropriate test directly - no indirection
+                try:
+                    if test_id == 'check_artifact':
+                        result = self.check_artifact(param1, param2)
+                    elif test_id == 'check_raw_baseline_min':
+                        result = self.check_raw_min(results, param1)
+                    elif test_id == 'check_raw_baseline_max':
+                        result = self.check_raw_max(results, param1)
+                    elif test_id == 'check_raw_baseline_mean':
+                        result = self.check_raw_mean(results, param1, param2)
+                    elif test_id == 'check_raw_baseline_sd':
+                        result = self.check_raw_sd(results, param1)
+                    elif test_id == 'check_dff_baseline':
+                        result = self.check_dff_baseline(results, param1)
+                    elif test_id == 'check_dff_return':
+                        result = self.check_dff_return(results, param1, param2)
+                    elif test_id == 'check_peak_height':
+                        result = self.check_peak_height(results, param1, param2)
+                    elif test_id == 'check_peak_width':
+                        result = self.check_peak_width(results, param1, param2)
+                    elif test_id == 'check_auc':
+                        result = self.check_auc(results, param1, param2)
+                    elif test_id == 'check_pos_control':
+                        result = self.check_pos_control(results, param1, param2)
+                    elif test_id == 'check_ntc_baseline':
+                        result = self.check_ntc_baseline(results, param1)
+                    elif test_id == 'check_ntc_response':
+                        result = self.check_ntc_response(results, param1)
+                    elif test_id == 'check_ionomycin':
+                        result = self.check_ionomycin(results, param1, param2)
+                    elif test_id == 'check_atp':
+                        result = self.check_atp(results, param1, param2)
+                    elif test_id == 'check_buffer':
+                        result = self.check_buffer(results, param1, param2)
+                    elif test_id == 'check_replicates':
+                        result = self.check_replicates(results, param1)
+                    else:
+                        result = {
+                            'passed': False,
+                            'message': f"Unknown test: {test_id}"
+                        }
+                except Exception as e:
+                    self.logger.error(f"Error running test {test_id}: {str(e)}")
+                    import traceback
+                    self.logger.error(traceback.format_exc())
+                    result = {
+                        'passed': False,
+                        'message': f"Test error: {str(e)}"
+                    }
+
+                test_results[test_id] = result
 
         results['tests'] = test_results
 
@@ -5664,65 +5997,7 @@ class DiagnosticTests:
             self.logger.error(traceback.format_exc())
             return {'status': 'error', 'message': str(e)}
 
-    def run_test(self, test_id, param1, param2, results, config):
-        """Run a specific diagnostic test"""
-        test_result = {'passed': False, 'message': ''}
-
-        try:
-            # Injection artifact test
-            if test_id == 'check_artifact':
-                test_result = self.check_artifact(param1, param2)
-
-            # Raw baseline tests
-            elif test_id == 'check_raw_baseline_min':
-                test_result = self.check_raw_min(results, param1)
-            elif test_id == 'check_raw_baseline_max':
-                test_result = self.check_raw_max(results, param1)
-            elif test_id == 'check_raw_baseline_mean':
-                test_result = self.check_raw_mean(results, param1, param2)
-            elif test_id == 'check_raw_baseline_sd':
-                test_result = self.check_raw_sd(results, param1)
-
-            # ΔF/F₀ tests
-            elif test_id == 'check_dff_baseline':
-                test_result = self.check_dff_baseline(results, param1)
-            elif test_id == 'check_dff_return':
-                test_result = self.check_dff_return(results, param1, param2)
-            elif test_id == 'check_peak_height':
-                test_result = self.check_peak_height(results, param1, param2)
-            elif test_id == 'check_peak_width':
-                test_result = self.check_peak_width(results, param1, param2)
-            elif test_id == 'check_auc':
-                test_result = self.check_auc(results, param1, param2)
-
-            # Control tests
-            elif test_id == 'check_pos_control':
-                test_result = self.check_pos_control(results, param1, param2)
-            elif test_id == 'check_ntc_baseline':
-                test_result = self.check_ntc_baseline(results, param1)
-            elif test_id == 'check_ntc_response':
-                test_result = self.check_ntc_response(results, param1)
-            elif test_id == 'check_ionomycin':
-                test_result = self.check_ionomycin(results, param1, param2)
-            elif test_id == 'check_atp':
-                test_result = self.check_atp(results, param1, param2)
-            elif test_id == 'check_buffer':
-                test_result = self.check_buffer(results, param1, param2)
-            elif test_id == 'check_replicates':
-                test_result = self.check_replicates(results, param1)
-
-        except Exception as e:
-            self.logger.error(f"Error running test {test_id}: {str(e)}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            test_result = {
-                'passed': False,
-                'message': f"Test error: {str(e)}"
-            }
-
-        return test_result
-
-    # Implement specific test methods
+    # Implement specific test methods - these don't need any changes
     def check_artifact(self, max_change, max_frames):
         """Check for injection artifact issues"""
         # In a real implementation, would analyze the signal during injection
@@ -5765,6 +6040,7 @@ class DiagnosticTests:
             'message': message
         }
 
+    # [Include all other check_* methods here - no changes needed]
     def check_raw_max(self, results, max_value):
         """Check raw baseline maximum is below threshold"""
         all_passed = True
