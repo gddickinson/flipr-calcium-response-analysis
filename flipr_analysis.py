@@ -4139,8 +4139,9 @@ class WellPlateLabeler(QMainWindow):
         # Clear the plot
         self.diagnosis_plot.axes.clear()
 
-        # Get threshold from diagnosis results
-        threshold = self.diagnosis_results['autism_risk_threshold']
+        # Get threshold information
+        threshold_value = self.diagnosis_results.get('threshold_value', 20.0)
+        threshold_type = self.diagnosis_results.get('threshold_type', "Ionomycin-Normalized ATP Response")
 
         # Collect sample data
         samples = []
@@ -4177,23 +4178,27 @@ class WellPlateLabeler(QMainWindow):
 
             # Add threshold line
             self.diagnosis_plot.axes.axhline(
-                y=threshold,
+                y=threshold_value,
                 color='red',
                 linestyle='--',
                 alpha=0.7,
-                label=f'Autism Risk Threshold ({threshold}%)'
+                label=f'Autism Risk Threshold ({threshold_value}%)'
             )
 
             # Add labels
             self.diagnosis_plot.axes.set_xticks(range(len(samples)))
             self.diagnosis_plot.axes.set_xticklabels(samples, rotation=45, ha='right')
-            self.diagnosis_plot.axes.set_ylabel('Normalized ATP Response (%)')
 
-            title = 'Diagnosis Results: Normalized ATP Response'
-            # Add note about buffer control
-            if not self.diagnosis_results.get('use_buffer_control', True):
-                title += ' (Buffer Control Disabled)'
+            # Set Y-axis label based on threshold type
+            if "Positive Control" in threshold_type:
+                y_label = '% of Positive Control'
+            else:
+                y_label = '% of Ionomycin'
 
+            self.diagnosis_plot.axes.set_ylabel(f'Normalized ATP Response ({y_label})')
+
+            # Set plot title based on threshold type
+            title = f'Diagnosis Results: {threshold_type}'
             self.diagnosis_plot.axes.set_title(title)
 
             # Add legend
@@ -4229,6 +4234,56 @@ class WellPlateLabeler(QMainWindow):
         # Update the diagnosis summary text
         self.update_diagnosis_summary()
 
+    def update_diagnosis_summary(self):
+        """Update the diagnosis summary text"""
+        if not self.diagnosis_results:
+            self.diagnosis_summary.setText("No diagnosis results available.")
+            return
+
+        # Create summary text
+        text = "<h3>Diagnosis Summary</h3>"
+
+        # Add threshold information
+        threshold_type = self.diagnosis_results.get('threshold_type', "Ionomycin-Normalized ATP Response")
+        threshold_value = self.diagnosis_results.get('threshold_value', 20.0)
+        text += f"<p><b>Threshold Type:</b> {threshold_type}<br>"
+        text += f"<b>Threshold Value:</b> {threshold_value}%</p>"
+
+        # Add test results summary
+        test_count = len(self.diagnosis_results['tests'])
+        passed_tests = sum(1 for test in self.diagnosis_results['tests'].values() if test['passed'])
+
+        text += f"<p><b>Quality Control:</b> {passed_tests}/{test_count} tests passed</p>"
+
+        if passed_tests < test_count:
+            # List failed tests
+            text += "<p><b>Failed Tests:</b></p><ul>"
+            for test_id, test_result in self.diagnosis_results['tests'].items():
+                if not test_result['passed']:
+                    text += f"<li>{test_result['message']}</li>"
+            text += "</ul>"
+
+        # Add diagnosis results
+        text += "<p><b>Diagnosis Results:</b></p><ul>"
+
+        for sample_id, diagnosis in self.diagnosis_results['diagnosis'].items():
+            status_color = "gray"
+            if diagnosis['status'] == 'POSITIVE':
+                status_color = "red"
+            elif diagnosis['status'] == 'NEGATIVE':
+                status_color = "green"
+
+            value_text = ""
+            if 'value' in diagnosis:
+                value_text = f" ({diagnosis['value']:.1f}%)"
+
+            text += f"<li><b>{sample_id}</b>: <span style='color:{status_color};'>{diagnosis['status']}</span>{value_text} - {diagnosis['message']}</li>"
+
+        text += "</ul>"
+
+        # Set the text
+        self.diagnosis_summary.setHtml(text)
+
     def create_diagnosis_plot_tab(self):
         """Create a tab for the diagnosis plot if it doesn't exist"""
         logger.info("Creating diagnosis plot tab")
@@ -4256,49 +4311,6 @@ class WellPlateLabeler(QMainWindow):
 
         logger.info("Diagnosis plot tab created")
 
-    def update_diagnosis_summary(self):
-        """Update the diagnosis summary text"""
-        if not self.diagnosis_results:
-            self.diagnosis_summary.setText("No diagnosis results available.")
-            return
-
-        # Create summary text
-        text = "<h3>Diagnosis Summary</h3>"
-
-        # Note about buffer control
-        if not self.diagnosis_results.get('use_buffer_control', True):
-            text += "<p><i>Note: Buffer control was disabled for this diagnosis</i></p>"
-
-        # Add test results summary
-        test_count = len(self.diagnosis_results['tests'])
-        passed_tests = sum(1 for test in self.diagnosis_results['tests'].values() if test['passed'])
-
-        text += f"<p><b>Quality Control:</b> {passed_tests}/{test_count} tests passed</p>"
-
-        if passed_tests < test_count:
-            # List failed tests
-            text += "<p><b>Failed Tests:</b></p><ul>"
-            for test_id, test_result in self.diagnosis_results['tests'].items():
-                if not test_result['passed']:
-                    text += f"<li>{test_result['message']}</li>"
-            text += "</ul>"
-
-        # Add diagnosis summary
-        text += "<p><b>Diagnosis Results:</b></p><ul>"
-
-        for sample_id, diagnosis in self.diagnosis_results['diagnosis'].items():
-            status_color = "gray"
-            if diagnosis['status'] == 'POSITIVE':
-                status_color = "red"
-            elif diagnosis['status'] == 'NEGATIVE':
-                status_color = "green"
-
-            text += f"<li><b>{sample_id}</b>: <span style='color:{status_color};'>{diagnosis['status']}</span> - {diagnosis['message']}</li>"
-
-        text += "</ul>"
-
-        # Set the text
-        self.diagnosis_summary.setHtml(text)
 
     def create_diagnosis_worksheet(self, wb):
         """Create diagnosis worksheet in Excel export"""
@@ -4312,28 +4324,58 @@ class WellPlateLabeler(QMainWindow):
         ws.cell(row=1, column=1, value="Diagnosis Configuration")
         ws.cell(row=1, column=1).font = Font(bold=True)
 
-        ws.cell(row=2, column=1, value="Autism Risk Threshold (%)")
-        ws.cell(row=2, column=2, value=self.diagnosis_results['autism_risk_threshold'])
+        # Add threshold information
+        threshold_type = self.diagnosis_results.get('threshold_type', "Ionomycin-Normalized ATP Response")
+        threshold_value = self.diagnosis_results.get('threshold_value', 20.0)
 
-        ws.cell(row=3, column=1, value="Buffer Control")
-        ws.cell(row=3, column=2, value="Enabled" if self.diagnosis_results.get('use_buffer_control', True) else "Disabled")
+        ws.cell(row=2, column=1, value="Threshold Type")
+        ws.cell(row=2, column=2, value=threshold_type)
+
+        ws.cell(row=3, column=1, value="Threshold Value (%)")
+        ws.cell(row=3, column=2, value=threshold_value)
+
+        # Add NTC and positive control configuration
+        ws.cell(row=5, column=1, value="NTC Control Column")
+        ntc_col = self.diagnosis_tab.ntc_control_from.value()
+        ws.cell(row=5, column=2, value=ntc_col)
+
+        ws.cell(row=6, column=1, value="Positive Control Column")
+        pos_col = self.diagnosis_tab.pos_control_from.value()
+        ws.cell(row=6, column=2, value=pos_col)
+
+        ws.cell(row=7, column=1, value="Sample Columns")
+        sample_cols = f"{self.diagnosis_tab.samples_from.value()}-{self.diagnosis_tab.samples_to.value()}"
+        ws.cell(row=7, column=2, value=sample_cols)
+
+        # Add well layout info
+        ws.cell(row=9, column=1, value="Wells Per Column")
+        ws.cell(row=9, column=1).font = Font(bold=True)
+
+        ws.cell(row=10, column=1, value="ATP Replicates")
+        ws.cell(row=10, column=2, value=self.diagnosis_tab.atp_wells.value())
+
+        ws.cell(row=11, column=1, value="Ionomycin Replicates")
+        ws.cell(row=11, column=2, value=self.diagnosis_tab.iono_wells.value())
+
+        ws.cell(row=12, column=1, value="Buffer Replicates")
+        ws.cell(row=12, column=2, value=self.diagnosis_tab.buffer_wells.value())
 
         # Add a separator
-        ws.cell(row=5, column=1, value="DIAGNOSIS RESULTS")
-        ws.cell(row=5, column=1).font = Font(bold=True)
+        ws.cell(row=14, column=1, value="DIAGNOSIS RESULTS")
+        ws.cell(row=14, column=1).font = Font(bold=True)
 
         # Add header row with basic formatting
         headers = [
-            "Sample ID", "Status", "Normalized ATP Response (%)",
-            "Autism Risk Threshold (%)", "Message"
+            "Sample ID", "Status", "Normalized Response (%)",
+            "Threshold (%)", "Message"
         ]
 
         for col, header in enumerate(headers, 1):
-            cell = ws.cell(row=6, column=col, value=header)
+            cell = ws.cell(row=15, column=col, value=header)
             cell.font = Font(bold=True)
 
-        # Add test results in the next rows
-        row = 7
+        # Add sample results in the next rows
+        row = 16
         for sample_id, diagnosis in self.diagnosis_results['diagnosis'].items():
             ws.cell(row=row, column=1, value=sample_id)
             ws.cell(row=row, column=2, value=diagnosis['status'])
@@ -4347,17 +4389,80 @@ class WellPlateLabeler(QMainWindow):
                     ws.cell(row=row, column=2).fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
                 elif diagnosis['status'] == 'NEGATIVE':
                     ws.cell(row=row, column=2).fill = PatternFill(start_color="CCFFCC", end_color="CCFFCC", fill_type="solid")
+                elif diagnosis['status'] == 'INVALID':
+                    ws.cell(row=row, column=2).fill = PatternFill(start_color="CCCCCC", end_color="CCCCCC", fill_type="solid")
 
             # Add threshold
-            ws.cell(row=row, column=4, value=self.diagnosis_results['autism_risk_threshold'])
+            ws.cell(row=row, column=4, value=threshold_value)
 
             # Add message
             ws.cell(row=row, column=5, value=diagnosis['message'])
 
             row += 1
 
-        # Add a separator
+        # Add detailed data for NTC control
+        row += 2
+        ws.cell(row=row, column=1, value="NTC CONTROL DATA")
+        ws.cell(row=row, column=1).font = Font(bold=True)
         row += 1
+
+        ntc_data = self.diagnosis_results['controls'].get('ntc')
+        if ntc_data and ntc_data['status'] == 'ok':
+            # Add headers for NTC data
+            ntc_headers = ["Well Type", "Raw Baseline", "Peak Response (ΔF/F₀)", "Wells"]
+            for col, header in enumerate(ntc_headers, 1):
+                ws.cell(row=row, column=col, value=header)
+                ws.cell(row=row, column=col).font = Font(bold=True)
+            row += 1
+
+            # Add data for each well type
+            for well_type, type_data in ntc_data['types'].items():
+                if type_data['status'] == 'ok':
+                    ws.cell(row=row, column=1, value=well_type)
+                    ws.cell(row=row, column=2, value=type_data['raw_baseline']['mean'] if 'raw_baseline' in type_data else "N/A")
+                    ws.cell(row=row, column=3, value=type_data['peak']['mean'] if 'peak' in type_data else "N/A")
+                    ws.cell(row=row, column=4, value=len(type_data['wells']) if 'wells' in type_data else 0)
+                    row += 1
+        else:
+            ws.cell(row=row, column=1, value="No NTC data available")
+            row += 1
+
+        # Add detailed data for positive control
+        row += 2
+        ws.cell(row=row, column=1, value="POSITIVE CONTROL DATA")
+        ws.cell(row=row, column=1).font = Font(bold=True)
+        row += 1
+
+        pos_data = self.diagnosis_results['controls'].get('positive')
+        if pos_data and pos_data['status'] == 'ok':
+            # Add headers for positive control data
+            pos_headers = ["Well Type", "Raw Baseline", "Peak Response (ΔF/F₀)", "Normalized Response (%)", "Wells"]
+            for col, header in enumerate(pos_headers, 1):
+                ws.cell(row=row, column=col, value=header)
+                ws.cell(row=row, column=col).font = Font(bold=True)
+            row += 1
+
+            # Add data for each well type
+            for well_type, type_data in pos_data['types'].items():
+                if type_data['status'] == 'ok':
+                    ws.cell(row=row, column=1, value=well_type)
+                    ws.cell(row=row, column=2, value=type_data['raw_baseline']['mean'] if 'raw_baseline' in type_data else "N/A")
+                    ws.cell(row=row, column=3, value=type_data['peak']['mean'] if 'peak' in type_data else "N/A")
+
+                    # Add normalized value for ATP wells
+                    if well_type == 'atp' and 'normalized' in type_data and type_data['normalized']:
+                        ws.cell(row=row, column=4, value=type_data['normalized']['mean'])
+                    else:
+                        ws.cell(row=row, column=4, value="N/A")
+
+                    ws.cell(row=row, column=5, value=len(type_data['wells']) if 'wells' in type_data else 0)
+                    row += 1
+        else:
+            ws.cell(row=row, column=1, value="No positive control data available")
+            row += 1
+
+        # Add a separator
+        row += 2
         ws.cell(row=row, column=1, value="QUALITY CONTROL TEST RESULTS")
         ws.cell(row=row, column=1).font = Font(bold=True)
 
@@ -4381,6 +4486,29 @@ class WellPlateLabeler(QMainWindow):
                 ws.cell(row=row, column=2).fill = PatternFill(start_color="CCFFCC", end_color="CCFFCC", fill_type="solid")
             else:
                 ws.cell(row=row, column=2).fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
+
+        # Add buffer test results section
+        if self.diagnosis_results.get('buffer_wells'):
+            row += 2
+            ws.cell(row=row, column=1, value="BUFFER WELL DATA")
+            ws.cell(row=row, column=1).font = Font(bold=True)
+            row += 1
+
+            # Add headers for buffer data
+            buffer_headers = ["Sample ID", "Raw Baseline", "Peak Response (ΔF/F₀)", "Wells"]
+            for col, header in enumerate(buffer_headers, 1):
+                ws.cell(row=row, column=col, value=header)
+                ws.cell(row=row, column=col).font = Font(bold=True)
+            row += 1
+
+            # Add data for each sample's buffer wells
+            for sample_id, buffer_data in self.diagnosis_results['buffer_wells'].items():
+                if buffer_data['status'] == 'ok':
+                    ws.cell(row=row, column=1, value=sample_id)
+                    ws.cell(row=row, column=2, value=buffer_data['raw_baseline']['mean'] if 'raw_baseline' in buffer_data else "N/A")
+                    ws.cell(row=row, column=3, value=buffer_data['peak']['mean'] if 'peak' in buffer_data else "N/A")
+                    ws.cell(row=row, column=4, value=len(buffer_data['wells']) if 'wells' in buffer_data else 0)
+                    row += 1
 
         # Auto-adjust column widths
         for column in ws.columns:
@@ -4658,80 +4786,183 @@ class DiagnosisOptionsTab(QWidget):
         control_group = QGroupBox("Control Columns")
         control_layout = QGridLayout()
 
-        # Positive Control
-        control_layout.addWidget(QLabel("Positive Control:"), 0, 0)
-        self.pos_control_from = QSpinBox()
-        self.pos_control_from.setRange(1, 12)
-        self.pos_control_from.setValue(1)
-        self.pos_control_from.valueChanged.connect(self.validate_column_selections)
-        control_layout.addWidget(self.pos_control_from, 0, 1)
+        # NTC Control (replacing Negative Control)
+        control_layout.addWidget(QLabel("NTC Control (No Cells):"), 0, 0)
+        self.ntc_control_from = QSpinBox()
+        self.ntc_control_from.setRange(1, 12)
+        self.ntc_control_from.setValue(11)  # Default to column 11
+        self.ntc_control_from.valueChanged.connect(self.validate_column_selections)
+        control_layout.addWidget(self.ntc_control_from, 0, 1)
 
         control_layout.addWidget(QLabel("to"), 0, 2)
-        self.pos_control_to = QSpinBox()
-        self.pos_control_to.setRange(1, 12)
-        self.pos_control_to.setValue(2)
-        self.pos_control_to.valueChanged.connect(self.validate_column_selections)
-        control_layout.addWidget(self.pos_control_to, 0, 3)
+        self.ntc_control_to = QSpinBox()
+        self.ntc_control_to.setRange(1, 12)
+        self.ntc_control_to.setValue(11)  # Default to column 11
+        self.ntc_control_to.valueChanged.connect(self.validate_column_selections)
+        control_layout.addWidget(self.ntc_control_to, 0, 3)
 
-        # Negative Control
-        control_layout.addWidget(QLabel("Negative Control:"), 1, 0)
-        self.neg_control_from = QSpinBox()
-        self.neg_control_from.setRange(1, 12)
-        self.neg_control_from.setValue(3)
-        self.neg_control_from.valueChanged.connect(self.validate_column_selections)
-        control_layout.addWidget(self.neg_control_from, 1, 1)
+        # Positive Control
+        control_layout.addWidget(QLabel("Positive Control:"), 1, 0)
+        self.pos_control_from = QSpinBox()
+        self.pos_control_from.setRange(1, 12)
+        self.pos_control_from.setValue(12)  # Default to column 12
+        self.pos_control_from.valueChanged.connect(self.validate_column_selections)
+        control_layout.addWidget(self.pos_control_from, 1, 1)
 
         control_layout.addWidget(QLabel("to"), 1, 2)
-        self.neg_control_to = QSpinBox()
-        self.neg_control_to.setRange(1, 12)
-        self.neg_control_to.setValue(4)
-        self.neg_control_to.valueChanged.connect(self.validate_column_selections)
-        control_layout.addWidget(self.neg_control_to, 1, 3)
-
-        # Buffer Control
-        control_layout.addWidget(QLabel("Buffer Control:"), 2, 0)
-
-        # Add checkbox for buffer control
-        self.use_buffer_control = QCheckBox("Include buffer control")
-        self.use_buffer_control.setChecked(True)
-        self.use_buffer_control.stateChanged.connect(self.toggle_buffer_controls)
-        control_layout.addWidget(self.use_buffer_control, 2, 4)
-
-        self.buffer_from = QSpinBox()
-        self.buffer_from.setRange(1, 12)
-        self.buffer_from.setValue(5)
-        self.buffer_from.valueChanged.connect(self.validate_column_selections)
-        control_layout.addWidget(self.buffer_from, 2, 1)
-
-        control_layout.addWidget(QLabel("to"), 2, 2)
-        self.buffer_to = QSpinBox()
-        self.buffer_to.setRange(1, 12)
-        self.buffer_to.setValue(6)
-        self.buffer_to.valueChanged.connect(self.validate_column_selections)
-        control_layout.addWidget(self.buffer_to, 2, 3)
+        self.pos_control_to = QSpinBox()
+        self.pos_control_to.setRange(1, 12)
+        self.pos_control_to.setValue(12)  # Default to column 12
+        self.pos_control_to.valueChanged.connect(self.validate_column_selections)
+        control_layout.addWidget(self.pos_control_to, 1, 3)
 
         # Sample Columns
-        control_layout.addWidget(QLabel("Test Samples:"), 3, 0)
+        control_layout.addWidget(QLabel("Test Samples:"), 2, 0)
         self.samples_from = QSpinBox()
         self.samples_from.setRange(1, 12)
-        self.samples_from.setValue(7)
+        self.samples_from.setValue(1)  # Default to column 1
         self.samples_from.valueChanged.connect(self.validate_column_selections)
-        control_layout.addWidget(self.samples_from, 3, 1)
+        control_layout.addWidget(self.samples_from, 2, 1)
 
-        control_layout.addWidget(QLabel("to"), 3, 2)
+        control_layout.addWidget(QLabel("to"), 2, 2)
         self.samples_to = QSpinBox()
         self.samples_to.setRange(1, 12)
-        self.samples_to.setValue(12)
+        self.samples_to.setValue(10)  # Default to column 10
         self.samples_to.valueChanged.connect(self.validate_column_selections)
-        control_layout.addWidget(self.samples_to, 3, 3)
+        control_layout.addWidget(self.samples_to, 2, 3)
 
         # Add overlap warning label
         self.overlap_warning = QLabel("")
         self.overlap_warning.setStyleSheet("color: red;")
-        control_layout.addWidget(self.overlap_warning, 4, 0, 1, 5)
+        control_layout.addWidget(self.overlap_warning, 3, 0, 1, 5)
 
         control_group.setLayout(control_layout)
         scroll_layout.addWidget(control_group)
+
+        # ===== Well Layout Group =====
+        well_layout_group = QGroupBox("Well Layout (Wells per Column)")
+        well_layout_grid = QGridLayout()
+
+        # ATP wells
+        well_layout_grid.addWidget(QLabel("ATP Replicates:"), 0, 0)
+        self.atp_wells = QSpinBox()
+        self.atp_wells.setRange(1, 8)
+        self.atp_wells.setValue(3)  # Default to 3 ATP replicates
+        well_layout_grid.addWidget(self.atp_wells, 0, 1)
+
+        # Ionomycin wells
+        well_layout_grid.addWidget(QLabel("Ionomycin Replicates:"), 1, 0)
+        self.iono_wells = QSpinBox()
+        self.iono_wells.setRange(1, 8)
+        self.iono_wells.setValue(3)  # Default to 3 Ionomycin replicates
+        well_layout_grid.addWidget(self.iono_wells, 1, 1)
+
+        # Buffer wells
+        well_layout_grid.addWidget(QLabel("Buffer Replicates:"), 2, 0)
+        self.buffer_wells = QSpinBox()
+        self.buffer_wells.setRange(1, 8)
+        self.buffer_wells.setValue(2)  # Default to 2 Buffer replicates
+        well_layout_grid.addWidget(self.buffer_wells, 2, 1)
+
+        # Add a validation check for total wells
+        self.wells_warning = QLabel("")
+        self.wells_warning.setStyleSheet("color: red;")
+        well_layout_grid.addWidget(self.wells_warning, 3, 0, 1, 2)
+
+        # Connect signals for validation
+        self.atp_wells.valueChanged.connect(self.validate_well_count)
+        self.iono_wells.valueChanged.connect(self.validate_well_count)
+        self.buffer_wells.valueChanged.connect(self.validate_well_count)
+
+        well_layout_group.setLayout(well_layout_grid)
+        scroll_layout.addWidget(well_layout_group)
+
+        # ===== Diagnostic Threshold Group =====
+        threshold_group = QGroupBox("Diagnostic Thresholds")
+        threshold_layout = QVBoxLayout()
+
+        # Threshold type selection
+        self.threshold_type_label = QLabel("Threshold Type:")
+        threshold_layout.addWidget(self.threshold_type_label)
+
+        self.threshold_type = QComboBox()
+        self.threshold_type.addItems([
+            "Ionomycin-Normalized ATP Response",
+            "Positive Control-Normalized ATP Response"
+        ])
+        self.threshold_type.currentIndexChanged.connect(self.update_threshold_description)
+        threshold_layout.addWidget(self.threshold_type)
+
+        # Threshold value
+        threshold_value_layout = QHBoxLayout()
+        self.threshold_label = QLabel("Autism Risk Threshold (% of reference):")
+        threshold_value_layout.addWidget(self.threshold_label)
+
+        self.autism_threshold = QDoubleSpinBox()
+        self.autism_threshold.setRange(0, 100)
+        self.autism_threshold.setValue(20.0)
+        self.autism_threshold.setDecimals(1)
+        self.autism_threshold.setSuffix(" %")
+        threshold_value_layout.addWidget(self.autism_threshold)
+
+        threshold_layout.addLayout(threshold_value_layout)
+
+        # Threshold description
+        self.threshold_description = QLabel()
+        self.threshold_description.setWordWrap(True)
+        self.threshold_description.setStyleSheet("font-style: italic; color: #666;")
+        threshold_layout.addWidget(self.threshold_description)
+
+        # Initialize description
+        self.update_threshold_description()
+
+        threshold_group.setLayout(threshold_layout)
+        scroll_layout.addWidget(threshold_group)
+
+        # ===== NTC Tests Group =====
+        ntc_group = QGroupBox("No Cells Control (NTC) Tests")
+        ntc_layout = QFormLayout()
+
+        # Max baseline value for NTC
+        self.ntc_max_baseline = QDoubleSpinBox()
+        self.ntc_max_baseline.setRange(0, 1000)
+        self.ntc_max_baseline.setValue(50.0)
+        self.ntc_max_baseline.setDecimals(1)
+        ntc_layout.addRow("Maximum Baseline Value:", self.ntc_max_baseline)
+
+        # Max response for NTC
+        self.ntc_max_response = QDoubleSpinBox()
+        self.ntc_max_response.setRange(0, 1.0)
+        self.ntc_max_response.setValue(0.05)
+        self.ntc_max_response.setDecimals(3)
+        self.ntc_max_response.setSingleStep(0.01)
+        ntc_layout.addRow("Maximum Response (ΔF/F₀):", self.ntc_max_response)
+
+        ntc_group.setLayout(ntc_layout)
+        scroll_layout.addWidget(ntc_group)
+
+        # ===== Buffer Tests Group =====
+        buffer_group = QGroupBox("Buffer Well Tests")
+        buffer_layout = QFormLayout()
+
+        # Max buffer response
+        self.buffer_max_response = QDoubleSpinBox()
+        self.buffer_max_response.setRange(0, 1.0)
+        self.buffer_max_response.setValue(0.1)
+        self.buffer_max_response.setDecimals(3)
+        self.buffer_max_response.setSingleStep(0.01)
+        buffer_layout.addRow("Maximum Response (ΔF/F₀):", self.buffer_max_response)
+
+        # Max buffer response as % of ATP
+        self.buffer_max_pct_atp = QDoubleSpinBox()
+        self.buffer_max_pct_atp.setRange(0, 100)
+        self.buffer_max_pct_atp.setValue(15.0)
+        self.buffer_max_pct_atp.setDecimals(1)
+        self.buffer_max_pct_atp.setSuffix(" %")
+        buffer_layout.addRow("Maximum Response (% of ATP):", self.buffer_max_pct_atp)
+
+        buffer_group.setLayout(buffer_layout)
+        scroll_layout.addWidget(buffer_group)
 
         # ===== Diagnostic Tests Group =====
         tests_group = QGroupBox("Diagnostic Tests")
@@ -4779,15 +5010,21 @@ class DiagnosisOptionsTab(QWidget):
                 ("check_pos_control", "Check positive control",
                  ("Minimum normalized response (%)", 15),
                  ("Maximum normalized response (%)", 50)),
-                ("check_neg_control", "Check negative control",
-                 ("Minimum normalized response (%)", 3),
-                 ("Maximum normalized response (%)", 15)),
+                ("check_ntc_baseline", "Check NTC baseline",
+                 ("Maximum baseline value", 50),
+                 ("", None)),
+                ("check_ntc_response", "Check NTC response",
+                 ("Maximum response (ΔF/F₀)", 0.05),
+                 ("", None)),
                 ("check_ionomycin", "Check ionomycin response",
                  ("Minimum peak ΔF/F₀", 1.0),
                  ("Maximum CV (%)", 20)),
                 ("check_atp", "Check ATP response",
                  ("Minimum peak ΔF/F₀", 0.1),
                  ("Maximum CV (%)", 25)),
+                ("check_buffer", "Check buffer response",
+                 ("Maximum response (ΔF/F₀)", 0.1),
+                 ("Maximum % of ATP response", 15)),
                 ("check_replicates", "Check replicate variability",
                  ("Maximum CV for triplicates (%)", 20),
                  ("", None))
@@ -4848,21 +5085,6 @@ class DiagnosisOptionsTab(QWidget):
         tests_group.setLayout(tests_layout)
         scroll_layout.addWidget(tests_group)
 
-        # ===== Diagnostic Thresholds Group =====
-        threshold_group = QGroupBox("Diagnostic Thresholds")
-        threshold_layout = QFormLayout()
-
-        # Threshold for diagnosing autism risk
-        self.autism_threshold = QDoubleSpinBox()
-        self.autism_threshold.setRange(0, 100)
-        self.autism_threshold.setValue(20.0)
-        self.autism_threshold.setDecimals(1)
-        self.autism_threshold.setSuffix(" %")
-        threshold_layout.addRow("Autism Risk Threshold (normalized ATP response):", self.autism_threshold)
-
-        threshold_group.setLayout(threshold_layout)
-        scroll_layout.addWidget(threshold_group)
-
         # Set the scroll content
         scroll_area.setWidget(scroll_content)
         main_layout.addWidget(scroll_area)
@@ -4886,29 +5108,40 @@ class DiagnosisOptionsTab(QWidget):
 
         # Initialize validation
         self.validate_column_selections()
+        self.validate_well_count()
 
-    def toggle_buffer_controls(self, state):
-        """Enable or disable buffer control input fields"""
-        enabled = bool(state)
-        self.buffer_from.setEnabled(enabled)
-        self.buffer_to.setEnabled(enabled)
+    def update_threshold_description(self):
+        """Update the threshold description based on selected type"""
+        threshold_type = self.threshold_type.currentText()
 
-        # Validate column selections again
-        self.validate_column_selections()
+        if "Ionomycin" in threshold_type:
+            self.threshold_description.setText(
+                "Values below this threshold indicate autism risk. ATP response is normalized to ionomycin response."
+            )
+            self.threshold_label.setText("Autism Risk Threshold (% of ionomycin):")
+        else:
+            self.threshold_description.setText(
+                "Values below this threshold indicate autism risk. ATP response is normalized to ionomycin and then to positive control."
+            )
+            self.threshold_label.setText("Autism Risk Threshold (% of positive control):")
+
+    def validate_well_count(self):
+        """Check that the total number of wells per column doesn't exceed 8"""
+        total_wells = self.atp_wells.value() + self.iono_wells.value() + self.buffer_wells.value()
+
+        if total_wells > 8:
+            self.wells_warning.setText(f"Warning: Total of {total_wells} wells exceeds the 8 wells per column")
+        else:
+            self.wells_warning.setText("")
 
     def validate_column_selections(self):
         """Check for overlapping column ranges and provide feedback"""
         # Get all column ranges
         ranges = [
-            ("Positive Control", range(self.pos_control_from.value(), self.pos_control_to.value() + 1)),
-            ("Negative Control", range(self.neg_control_from.value(), self.neg_control_to.value() + 1))
+            ("Test Samples", range(self.samples_from.value(), self.samples_to.value() + 1)),
+            ("NTC Control", range(self.ntc_control_from.value(), self.ntc_control_to.value() + 1)),
+            ("Positive Control", range(self.pos_control_from.value(), self.pos_control_to.value() + 1))
         ]
-
-        # Only include buffer control if enabled
-        if self.use_buffer_control.isChecked():
-            ranges.append(("Buffer Control", range(self.buffer_from.value(), self.buffer_to.value() + 1)))
-
-        ranges.append(("Test Samples", range(self.samples_from.value(), self.samples_to.value() + 1)))
 
         # Check for overlaps
         overlaps = []
@@ -4927,33 +5160,43 @@ class DiagnosisOptionsTab(QWidget):
             self.overlap_warning.setText("Warning: " + "; ".join(overlaps))
 
             # Style the spinboxes that have overlapping values
-            for widget in [self.pos_control_from, self.pos_control_to,
-                          self.neg_control_from, self.neg_control_to,
-                          self.buffer_from, self.buffer_to,
-                          self.samples_from, self.samples_to]:
+            for widget in [self.samples_from, self.samples_to,
+                          self.ntc_control_from, self.ntc_control_to,
+                          self.pos_control_from, self.pos_control_to]:
                 widget.setStyleSheet("QSpinBox { background-color: #FFEEEE; }")
         else:
             self.overlap_warning.setText("")
 
             # Reset spinbox styles
-            for widget in [self.pos_control_from, self.pos_control_to,
-                          self.neg_control_from, self.neg_control_to,
-                          self.buffer_from, self.buffer_to,
-                          self.samples_from, self.samples_to]:
+            for widget in [self.samples_from, self.samples_to,
+                          self.ntc_control_from, self.ntc_control_to,
+                          self.pos_control_from, self.pos_control_to]:
                 widget.setStyleSheet("")
 
     def get_config(self):
         """Get the current diagnosis configuration"""
         config = {
             'controls': {
-                'positive': (self.pos_control_from.value(), self.pos_control_to.value()),
-                'negative': (self.neg_control_from.value(), self.neg_control_to.value()),
-                'use_buffer': self.use_buffer_control.isChecked(),
-                'buffer': (self.buffer_from.value(), self.buffer_to.value()),
-                'samples': (self.samples_from.value(), self.samples_to.value())
+                'samples': (self.samples_from.value(), self.samples_to.value()),
+                'ntc': (self.ntc_control_from.value(), self.ntc_control_to.value()),
+                'positive': (self.pos_control_from.value(), self.pos_control_to.value())
+            },
+            'well_layout': {
+                'atp_wells': self.atp_wells.value(),
+                'iono_wells': self.iono_wells.value(),
+                'buffer_wells': self.buffer_wells.value()
+            },
+            'ntc_tests': {
+                'max_baseline': self.ntc_max_baseline.value(),
+                'max_response': self.ntc_max_response.value()
+            },
+            'buffer_tests': {
+                'max_response': self.buffer_max_response.value(),
+                'max_pct_atp': self.buffer_max_pct_atp.value()
             },
             'thresholds': {
-                'autism_risk': self.autism_threshold.value()
+                'type': self.threshold_type.currentText(),
+                'value': self.autism_threshold.value()
             },
             'tests': {}
         }
@@ -4977,28 +5220,50 @@ class DiagnosisOptionsTab(QWidget):
         try:
             # Set control columns
             controls = config.get('controls', {})
-            if 'positive' in controls:
-                self.pos_control_from.setValue(controls['positive'][0])
-                self.pos_control_to.setValue(controls['positive'][1])
-            if 'negative' in controls:
-                self.neg_control_from.setValue(controls['negative'][0])
-                self.neg_control_to.setValue(controls['negative'][1])
 
-            # Set buffer control toggle
-            use_buffer = controls.get('use_buffer', True)
-            self.use_buffer_control.setChecked(use_buffer)
-
-            if 'buffer' in controls:
-                self.buffer_from.setValue(controls['buffer'][0])
-                self.buffer_to.setValue(controls['buffer'][1])
             if 'samples' in controls:
                 self.samples_from.setValue(controls['samples'][0])
                 self.samples_to.setValue(controls['samples'][1])
 
+            if 'ntc' in controls:
+                self.ntc_control_from.setValue(controls['ntc'][0])
+                self.ntc_control_to.setValue(controls['ntc'][1])
+
+            if 'positive' in controls:
+                self.pos_control_from.setValue(controls['positive'][0])
+                self.pos_control_to.setValue(controls['positive'][1])
+
+            # Set well layout
+            well_layout = config.get('well_layout', {})
+            if 'atp_wells' in well_layout:
+                self.atp_wells.setValue(well_layout['atp_wells'])
+            if 'iono_wells' in well_layout:
+                self.iono_wells.setValue(well_layout['iono_wells'])
+            if 'buffer_wells' in well_layout:
+                self.buffer_wells.setValue(well_layout['buffer_wells'])
+
+            # Set NTC tests
+            ntc_tests = config.get('ntc_tests', {})
+            if 'max_baseline' in ntc_tests:
+                self.ntc_max_baseline.setValue(ntc_tests['max_baseline'])
+            if 'max_response' in ntc_tests:
+                self.ntc_max_response.setValue(ntc_tests['max_response'])
+
+            # Set buffer tests
+            buffer_tests = config.get('buffer_tests', {})
+            if 'max_response' in buffer_tests:
+                self.buffer_max_response.setValue(buffer_tests['max_response'])
+            if 'max_pct_atp' in buffer_tests:
+                self.buffer_max_pct_atp.setValue(buffer_tests['max_pct_atp'])
+
             # Set thresholds
             thresholds = config.get('thresholds', {})
-            if 'autism_risk' in thresholds:
-                self.autism_threshold.setValue(thresholds['autism_risk'])
+            if 'type' in thresholds:
+                index = self.threshold_type.findText(thresholds['type'])
+                if index >= 0:
+                    self.threshold_type.setCurrentIndex(index)
+            if 'value' in thresholds:
+                self.autism_threshold.setValue(thresholds['value'])
 
             # Set test configurations
             tests = config.get('tests', {})
@@ -5010,10 +5275,9 @@ class DiagnosisOptionsTab(QWidget):
                     if widgets['param2_input'] and 'param2' in test_config:
                         widgets['param2_input'].setValue(test_config['param2'])
 
-
-            # Validate column selections
+            # Validate settings
             self.validate_column_selections()
-
+            self.validate_well_count()
 
         except Exception as e:
             logger.error(f"Error setting diagnosis configuration: {str(e)}")
@@ -5056,13 +5320,26 @@ class DiagnosisOptionsTab(QWidget):
         # Define default configuration
         default_config = {
             'controls': {
-                'positive': (1, 2),
-                'negative': (3, 4),
-                'buffer': (5, 6),
-                'samples': (7, 12)
+                'samples': (1, 10),
+                'ntc': (11, 11),
+                'positive': (12, 12)
+            },
+            'well_layout': {
+                'atp_wells': 3,
+                'iono_wells': 3,
+                'buffer_wells': 2
+            },
+            'ntc_tests': {
+                'max_baseline': 50.0,
+                'max_response': 0.05
+            },
+            'buffer_tests': {
+                'max_response': 0.1,
+                'max_pct_atp': 15.0
             },
             'thresholds': {
-                'autism_risk': 20.0
+                'type': "Positive Control-Normalized ATP Response",
+                'value': 20.0
             },
             'tests': {
                 'check_artifact': {'enabled': True, 'param1': 0.2, 'param2': 5},
@@ -5076,9 +5353,11 @@ class DiagnosisOptionsTab(QWidget):
                 'check_peak_width': {'enabled': True, 'param1': 5, 'param2': 30},
                 'check_auc': {'enabled': True, 'param1': 1.0, 'param2': 100.0},
                 'check_pos_control': {'enabled': True, 'param1': 15, 'param2': 50},
-                'check_neg_control': {'enabled': True, 'param1': 3, 'param2': 15},
+                'check_ntc_baseline': {'enabled': True, 'param1': 50, 'param2': None},
+                'check_ntc_response': {'enabled': True, 'param1': 0.05, 'param2': None},
                 'check_ionomycin': {'enabled': True, 'param1': 1.0, 'param2': 20},
                 'check_atp': {'enabled': True, 'param1': 0.1, 'param2': 25},
+                'check_buffer': {'enabled': True, 'param1': 0.1, 'param2': 15},
                 'check_replicates': {'enabled': True, 'param1': 20, 'param2': None}
             }
         }
@@ -5089,8 +5368,7 @@ class DiagnosisOptionsTab(QWidget):
 
 
 
-
-# Add this class to implement diagnostic tests
+# Update this class to implement the new diagnostic approach
 class DiagnosticTests:
     """Class to perform diagnostic tests on FLIPR data"""
 
@@ -5110,66 +5388,128 @@ class DiagnosticTests:
 
         # Extract plate regions
         controls = config['controls']
-        pos_control_cols = range(controls['positive'][0]-1, controls['positive'][1])
-        neg_control_cols = range(controls['negative'][0]-1, controls['negative'][1])
-
-        # Handle buffer control (now optional)
-        use_buffer = controls.get('use_buffer', True)
-        buffer_cols = range(controls['buffer'][0]-1, controls['buffer'][1]) if use_buffer else []
-
         sample_cols = range(controls['samples'][0]-1, controls['samples'][1])
+        ntc_cols = range(controls['ntc'][0]-1, controls['ntc'][1])
+        pos_control_cols = range(controls['positive'][0]-1, controls['positive'][1])
+
+        # Extract well layout information
+        well_layout = config.get('well_layout', {})
+        atp_wells = well_layout.get('atp_wells', 3)
+        iono_wells = well_layout.get('iono_wells', 3)
+        buffer_wells = well_layout.get('buffer_wells', 2)
+
+        # Threshold configuration
+        thresholds = config.get('thresholds', {})
+        threshold_type = thresholds.get('type', "Positive Control-Normalized ATP Response")
+        threshold_value = thresholds.get('value', 20.0)
 
         # Collect wells by type
-        pos_control_wells = []
-        neg_control_wells = []
-        buffer_wells = []
         sample_wells = {}  # Dictionary keyed by sample_id
+        ntc_wells = {
+            'atp': [],
+            'iono': [],
+            'buffer': []
+        }
+        pos_control_wells = {
+            'atp': [],
+            'iono': [],
+            'buffer': []
+        }
+        buffer_wells_by_sample = {}  # Buffer wells grouped by sample_id
 
+        # Analyze the plate layout to find all wells
         for idx in range(96):
             well_data = self.parent.well_data[idx]
             well_id = well_data['well_id']
-            row, col = self.get_row_col(well_id)
 
             # Skip wells without data
             if not well_id or well_id not in self.parent.dff_data.index:
                 continue
 
-            # Categorize wells based on column
-            if col in pos_control_cols:
-                pos_control_wells.append(well_id)
-            elif col in neg_control_cols:
-                neg_control_wells.append(well_id)
-            elif use_buffer and col in buffer_cols:
-                buffer_wells.append(well_id)
-            elif col in sample_cols:
-                # Group by sample_id
-                sample_id = well_data.get('sample_id', 'unknown')
-                if sample_id not in sample_wells:
-                    sample_wells[sample_id] = []
-                sample_wells[sample_id].append(well_id)
+            # Get well location
+            row, col = self.get_row_col(well_id)
 
-        self.logger.info(f"Found {len(pos_control_wells)} positive control wells, {len(neg_control_wells)} negative control wells, {len(buffer_wells)} buffer wells, and {len(sample_wells)} unique samples")
+            # Determine well type based on label
+            label = well_data.get("label", "").lower()
+            sample_id = well_data.get("sample_id", "default")
+
+            # Group wells based on column and label
+            if col in sample_cols:
+                # For sample columns, check the label to determine type
+                if "atp" in label:
+                    if sample_id not in sample_wells:
+                        sample_wells[sample_id] = {'atp': [], 'iono': [], 'buffer': []}
+                    sample_wells[sample_id]['atp'].append(well_id)
+                elif "ionom" in label:
+                    if sample_id not in sample_wells:
+                        sample_wells[sample_id] = {'atp': [], 'iono': [], 'buffer': []}
+                    sample_wells[sample_id]['iono'].append(well_id)
+                elif "buffer" in label or "hbss" in label:
+                    if sample_id not in sample_wells:
+                        sample_wells[sample_id] = {'atp': [], 'iono': [], 'buffer': []}
+                    sample_wells[sample_id]['buffer'].append(well_id)
+
+                    # Also track buffer wells by sample for specific tests
+                    if sample_id not in buffer_wells_by_sample:
+                        buffer_wells_by_sample[sample_id] = []
+                    buffer_wells_by_sample[sample_id].append(well_id)
+
+            elif col in ntc_cols:
+                # NTC column
+                if "atp" in label:
+                    ntc_wells['atp'].append(well_id)
+                elif "ionom" in label:
+                    ntc_wells['iono'].append(well_id)
+                elif "buffer" in label or "hbss" in label:
+                    ntc_wells['buffer'].append(well_id)
+
+            elif col in pos_control_cols:
+                # Positive control column
+                if "atp" in label:
+                    pos_control_wells['atp'].append(well_id)
+                elif "ionom" in label:
+                    pos_control_wells['iono'].append(well_id)
+                elif "buffer" in label or "hbss" in label:
+                    pos_control_wells['buffer'].append(well_id)
+
+        # Log the well counts found
+        self.logger.info(f"Found {len(sample_wells)} unique samples")
+        self.logger.info(f"NTC wells: {len(ntc_wells['atp'])} ATP, {len(ntc_wells['iono'])} Ionomycin, {len(ntc_wells['buffer'])} Buffer")
+        self.logger.info(f"Positive control wells: {len(pos_control_wells['atp'])} ATP, {len(pos_control_wells['iono'])} Ionomycin, {len(pos_control_wells['buffer'])} Buffer")
+
+        # Check if we found enough wells
+        if not sample_wells:
+            self.logger.warning("No sample wells found. Check plate layout.")
+            return None
+
+        if not ntc_wells['atp']:
+            self.logger.warning("No NTC ATP wells found. Check plate layout.")
+
+        if not pos_control_wells['atp']:
+            self.logger.warning("No positive control ATP wells found. Check plate layout.")
 
         # Initialize results
         results = {
             'controls': {
-                'positive': self.analyze_well_group(pos_control_wells, 'Positive Control'),
-                'negative': self.analyze_well_group(neg_control_wells, 'Negative Control'),
+                'ntc': self.analyze_well_group_by_type(ntc_wells, 'NTC Control'),
+                'positive': self.analyze_well_group_by_type(pos_control_wells, 'Positive Control'),
             },
             'samples': {},
+            'buffer_wells': {},
             'tests': {},
-            'autism_risk_threshold': config['thresholds']['autism_risk'],
-            'diagnosis': {},
-            'use_buffer_control': use_buffer
+            'threshold_type': threshold_type,
+            'threshold_value': threshold_value,
+            'diagnosis': {}
         }
-
-        # Only include buffer control results if enabled
-        if use_buffer:
-            results['controls']['buffer'] = self.analyze_well_group(buffer_wells, 'Buffer')
 
         # Analyze each sample
         for sample_id, wells in sample_wells.items():
-            results['samples'][sample_id] = self.analyze_well_group(wells, sample_id)
+            results['samples'][sample_id] = self.analyze_well_group_by_type(wells, sample_id)
+
+        # Analyze buffer wells for each sample
+        for sample_id, buffer_wells in buffer_wells_by_sample.items():
+            if buffer_wells:
+                results['buffer_wells'][sample_id] = self.analyze_well_group(buffer_wells, f"Buffer ({sample_id})")
 
         # Run diagnostic tests
         test_results = {}
@@ -5179,24 +5519,34 @@ class DiagnosticTests:
             if not test_config['enabled']:
                 continue
 
-            # Skip buffer-related tests if buffer control is disabled
-            if not use_buffer and test_id in ['check_dff_return']:
-                continue
-
             result = self.run_test(
                 test_id,
                 test_config['param1'],
                 test_config['param2'],
-                results
+                results,
+                config
             )
             test_results[test_id] = result
 
         results['tests'] = test_results
 
-        # Determine diagnosis
+        # Determine diagnosis based on threshold_type
         self.determine_diagnosis(results)
 
         return results
+
+    def analyze_well_group_by_type(self, wells_by_type, label):
+        """Analyze groups of wells separated by ATP, Ionomycin, and Buffer types"""
+        result = {'status': 'ok', 'types': {}}
+
+        for well_type, wells in wells_by_type.items():
+            if wells:
+                type_result = self.analyze_well_group(wells, f"{label} ({well_type})")
+                result['types'][well_type] = type_result
+            else:
+                result['types'][well_type] = {'status': 'missing'}
+
+        return result
 
     def analyze_well_group(self, wells, label):
         """Analyze a group of wells and return basic metrics"""
@@ -5248,6 +5598,8 @@ class DiagnosticTests:
 
             # Calculate normalized responses if possible
             normalized_responses = None
+            pc_normalized_responses = None
+
             if hasattr(self.parent, 'get_ionomycin_responses'):
                 ionomycin_responses = self.parent.get_ionomycin_responses()
                 if ionomycin_responses:
@@ -5272,6 +5624,19 @@ class DiagnosticTests:
                             'cv': (np.std(normalized_array) / np.mean(normalized_array)) * 100 if np.mean(normalized_array) > 0 else 0
                         }
 
+                        # If positive control normalization is enabled, calculate those values too
+                        if self.parent.normalize_to_positive_control:
+                            positive_control_value = self.parent.get_positive_control_responses()
+                            if positive_control_value:
+                                pc_normalized_values = [v / positive_control_value * 100 for v in normalized_values]
+                                pc_normalized_array = np.array(pc_normalized_values)
+                                pc_normalized_responses = {
+                                    'values': pc_normalized_values,
+                                    'mean': float(np.mean(pc_normalized_array)),
+                                    'sem': float(np.std(pc_normalized_array) / np.sqrt(len(pc_normalized_array))),
+                                    'cv': (np.std(pc_normalized_array) / np.mean(pc_normalized_array)) * 100 if np.mean(pc_normalized_array) > 0 else 0
+                                }
+
             return {
                 'status': 'ok',
                 'wells': wells,
@@ -5289,14 +5654,17 @@ class DiagnosticTests:
                     'sem': auc_sem,
                     'cv': auc_cv
                 } if auc_mean is not None else None,
-                'normalized': normalized_responses
+                'normalized': normalized_responses,
+                'pc_normalized': pc_normalized_responses
             }
 
         except Exception as e:
             self.logger.error(f"Error analyzing {label} wells: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             return {'status': 'error', 'message': str(e)}
 
-    def run_test(self, test_id, param1, param2, results):
+    def run_test(self, test_id, param1, param2, results, config):
         """Run a specific diagnostic test"""
         test_result = {'passed': False, 'message': ''}
 
@@ -5330,17 +5698,23 @@ class DiagnosticTests:
             # Control tests
             elif test_id == 'check_pos_control':
                 test_result = self.check_pos_control(results, param1, param2)
-            elif test_id == 'check_neg_control':
-                test_result = self.check_neg_control(results, param1, param2)
+            elif test_id == 'check_ntc_baseline':
+                test_result = self.check_ntc_baseline(results, param1)
+            elif test_id == 'check_ntc_response':
+                test_result = self.check_ntc_response(results, param1)
             elif test_id == 'check_ionomycin':
                 test_result = self.check_ionomycin(results, param1, param2)
             elif test_id == 'check_atp':
                 test_result = self.check_atp(results, param1, param2)
+            elif test_id == 'check_buffer':
+                test_result = self.check_buffer(results, param1, param2)
             elif test_id == 'check_replicates':
                 test_result = self.check_replicates(results, param1)
 
         except Exception as e:
             self.logger.error(f"Error running test {test_id}: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             test_result = {
                 'passed': False,
                 'message': f"Test error: {str(e)}"
@@ -5366,16 +5740,20 @@ class DiagnosticTests:
         # Check controls
         for control_type, control_data in results['controls'].items():
             if control_data['status'] == 'ok':
-                if control_data['raw_baseline']['min'] < min_value:
-                    all_passed = False
-                    failed_groups.append(f"{control_type} control")
+                for type_name, type_data in control_data['types'].items():
+                    if type_data['status'] == 'ok' and 'raw_baseline' in type_data:
+                        if type_data['raw_baseline']['min'] < min_value:
+                            all_passed = False
+                            failed_groups.append(f"{control_type} {type_name}")
 
-        # Check samples
+        # Check samples (ATP wells only)
         for sample_id, sample_data in results['samples'].items():
             if sample_data['status'] == 'ok':
-                if sample_data['raw_baseline']['min'] < min_value:
-                    all_passed = False
-                    failed_groups.append(f"sample {sample_id}")
+                for type_name, type_data in sample_data['types'].items():
+                    if type_name == 'atp' and type_data['status'] == 'ok' and 'raw_baseline' in type_data:
+                        if type_data['raw_baseline']['min'] < min_value:
+                            all_passed = False
+                            failed_groups.append(f"{sample_id} {type_name}")
 
         if all_passed:
             message = f"All raw baseline minimums are above threshold ({min_value})"
@@ -5392,19 +5770,24 @@ class DiagnosticTests:
         all_passed = True
         failed_groups = []
 
+        # Similar implementation to check_raw_min, but checking for maximum value
         # Check controls
         for control_type, control_data in results['controls'].items():
             if control_data['status'] == 'ok':
-                if control_data['raw_baseline']['max'] > max_value:
-                    all_passed = False
-                    failed_groups.append(f"{control_type} control")
+                for type_name, type_data in control_data['types'].items():
+                    if type_data['status'] == 'ok' and 'raw_baseline' in type_data:
+                        if type_data['raw_baseline']['max'] > max_value:
+                            all_passed = False
+                            failed_groups.append(f"{control_type} {type_name}")
 
-        # Check samples
+        # Check samples (ATP wells only)
         for sample_id, sample_data in results['samples'].items():
             if sample_data['status'] == 'ok':
-                if sample_data['raw_baseline']['max'] > max_value:
-                    all_passed = False
-                    failed_groups.append(f"sample {sample_id}")
+                for type_name, type_data in sample_data['types'].items():
+                    if type_name == 'atp' and type_data['status'] == 'ok' and 'raw_baseline' in type_data:
+                        if type_data['raw_baseline']['max'] > max_value:
+                            all_passed = False
+                            failed_groups.append(f"{sample_id} {type_name}")
 
         if all_passed:
             message = f"All raw baseline maximums are below threshold ({max_value})"
@@ -5423,19 +5806,23 @@ class DiagnosticTests:
 
         # Check controls
         for control_type, control_data in results['controls'].items():
-            if control_data['status'] == 'ok':
-                mean = control_data['raw_baseline']['mean']
-                if mean < min_value or mean > max_value:
-                    all_passed = False
-                    failed_groups.append(f"{control_type} control")
+            if control_type != 'ntc' and control_data['status'] == 'ok':  # Skip NTC for this test
+                for type_name, type_data in control_data['types'].items():
+                    if type_data['status'] == 'ok' and 'raw_baseline' in type_data:
+                        mean = type_data['raw_baseline']['mean']
+                        if mean < min_value or mean > max_value:
+                            all_passed = False
+                            failed_groups.append(f"{control_type} {type_name}")
 
-        # Check samples
+        # Check samples (ATP wells only)
         for sample_id, sample_data in results['samples'].items():
             if sample_data['status'] == 'ok':
-                mean = sample_data['raw_baseline']['mean']
-                if mean < min_value or mean > max_value:
-                    all_passed = False
-                    failed_groups.append(f"sample {sample_id}")
+                for type_name, type_data in sample_data['types'].items():
+                    if type_name == 'atp' and type_data['status'] == 'ok' and 'raw_baseline' in type_data:
+                        mean = type_data['raw_baseline']['mean']
+                        if mean < min_value or mean > max_value:
+                            all_passed = False
+                            failed_groups.append(f"{sample_id} {type_name}")
 
         if all_passed:
             message = f"All raw baseline means are within range ({min_value} - {max_value})"
@@ -5452,19 +5839,23 @@ class DiagnosticTests:
         all_passed = True
         failed_groups = []
 
-        # Check controls
+        # Check controls (excluding NTC)
         for control_type, control_data in results['controls'].items():
-            if control_data['status'] == 'ok':
-                if control_data['raw_baseline']['sd'] > max_sd:
-                    all_passed = False
-                    failed_groups.append(f"{control_type} control")
+            if control_type != 'ntc' and control_data['status'] == 'ok':
+                for type_name, type_data in control_data['types'].items():
+                    if type_data['status'] == 'ok' and 'raw_baseline' in type_data:
+                        if type_data['raw_baseline']['sd'] > max_sd:
+                            all_passed = False
+                            failed_groups.append(f"{control_type} {type_name}")
 
-        # Check samples
+        # Check samples (ATP wells only)
         for sample_id, sample_data in results['samples'].items():
             if sample_data['status'] == 'ok':
-                if sample_data['raw_baseline']['sd'] > max_sd:
-                    all_passed = False
-                    failed_groups.append(f"sample {sample_id}")
+                for type_name, type_data in sample_data['types'].items():
+                    if type_name == 'atp' and type_data['status'] == 'ok' and 'raw_baseline' in type_data:
+                        if type_data['raw_baseline']['sd'] > max_sd:
+                            all_passed = False
+                            failed_groups.append(f"{sample_id} {type_name}")
 
         if all_passed:
             message = f"All raw baseline SDs are below threshold ({max_sd})"
@@ -5481,21 +5872,25 @@ class DiagnosticTests:
         all_passed = True
         failed_groups = []
 
-        # Check controls
+        # Check controls (excluding NTC)
         for control_type, control_data in results['controls'].items():
-            if control_data['status'] == 'ok':
-                mean = abs(control_data['dff_baseline']['mean'])
-                if mean > max_deviation:
-                    all_passed = False
-                    failed_groups.append(f"{control_type} control")
+            if control_type != 'ntc' and control_data['status'] == 'ok':
+                for type_name, type_data in control_data['types'].items():
+                    if type_name != 'buffer' and type_data['status'] == 'ok' and 'dff_baseline' in type_data:
+                        mean = abs(type_data['dff_baseline']['mean'])
+                        if mean > max_deviation:
+                            all_passed = False
+                            failed_groups.append(f"{control_type} {type_name}")
 
-        # Check samples
+        # Check samples (ATP wells only)
         for sample_id, sample_data in results['samples'].items():
             if sample_data['status'] == 'ok':
-                mean = abs(sample_data['dff_baseline']['mean'])
-                if mean > max_deviation:
-                    all_passed = False
-                    failed_groups.append(f"sample {sample_id}")
+                for type_name, type_data in sample_data['types'].items():
+                    if type_name == 'atp' and type_data['status'] == 'ok' and 'dff_baseline' in type_data:
+                        mean = abs(type_data['dff_baseline']['mean'])
+                        if mean > max_deviation:
+                            all_passed = False
+                            failed_groups.append(f"{sample_id} {type_name}")
 
         if all_passed:
             message = f"All ΔF/F₀ baselines are close to zero (within {max_deviation})"
@@ -5521,26 +5916,30 @@ class DiagnosticTests:
         all_passed = True
         failed_groups = []
 
-        # Check controls
-        for control_type, control_data in results['controls'].items():
-            if control_data['status'] == 'ok':
-                peak = control_data['peak']['mean']
+        # Check ATP peaks for positive control and samples (not NTC)
+        control_data = results['controls'].get('positive')
+        if control_data and control_data['status'] == 'ok':
+            atp_data = control_data['types'].get('atp')
+            if atp_data and atp_data['status'] == 'ok':
+                peak = atp_data['peak']['mean']
                 if peak < min_height or peak > max_height:
                     all_passed = False
-                    failed_groups.append(f"{control_type} control")
+                    failed_groups.append("positive control ATP")
 
-        # Check samples
+        # Check samples (ATP wells only)
         for sample_id, sample_data in results['samples'].items():
             if sample_data['status'] == 'ok':
-                peak = sample_data['peak']['mean']
-                if peak < min_height or peak > max_height:
-                    all_passed = False
-                    failed_groups.append(f"sample {sample_id}")
+                atp_data = sample_data['types'].get('atp')
+                if atp_data and atp_data['status'] == 'ok':
+                    peak = atp_data['peak']['mean']
+                    if peak < min_height or peak > max_height:
+                        all_passed = False
+                        failed_groups.append(f"{sample_id} ATP")
 
         if all_passed:
-            message = f"All peak heights are within range ({min_height} - {max_height})"
+            message = f"All ATP peak heights are within range ({min_height} - {max_height})"
         else:
-            message = f"Peak height outside range ({min_height} - {max_height}) for: {', '.join(failed_groups)}"
+            message = f"ATP peak height outside range ({min_height} - {max_height}) for: {', '.join(failed_groups)}"
 
         return {
             'passed': all_passed,
@@ -5561,21 +5960,25 @@ class DiagnosticTests:
         all_passed = True
         failed_groups = []
 
-        # Check controls
-        for control_type, control_data in results['controls'].items():
-            if control_data['status'] == 'ok' and control_data['auc'] is not None:
-                auc = control_data['auc']['mean']
+        # Check controls - only positive control ATP
+        control_data = results['controls'].get('positive')
+        if control_data and control_data['status'] == 'ok':
+            atp_data = control_data['types'].get('atp')
+            if atp_data and atp_data['status'] == 'ok' and atp_data['auc'] is not None:
+                auc = atp_data['auc']['mean']
                 if auc < min_auc or auc > max_auc:
                     all_passed = False
-                    failed_groups.append(f"{control_type} control")
+                    failed_groups.append("positive control ATP")
 
-        # Check samples
+        # Check samples (ATP wells only)
         for sample_id, sample_data in results['samples'].items():
-            if sample_data['status'] == 'ok' and sample_data['auc'] is not None:
-                auc = sample_data['auc']['mean']
-                if auc < min_auc or auc > max_auc:
-                    all_passed = False
-                    failed_groups.append(f"sample {sample_id}")
+            if sample_data['status'] == 'ok':
+                atp_data = sample_data['types'].get('atp')
+                if atp_data and atp_data['status'] == 'ok' and atp_data['auc'] is not None:
+                    auc = atp_data['auc']['mean']
+                    if auc < min_auc or auc > max_auc:
+                        all_passed = False
+                        failed_groups.append(f"{sample_id} ATP")
 
         if all_passed:
             message = f"All AUC values are within range ({min_auc} - {max_auc})"
@@ -5589,20 +5992,21 @@ class DiagnosticTests:
 
     def check_pos_control(self, results, min_resp, max_resp):
         """Check positive control normalized response is within range"""
-        if 'positive' not in results['controls']:
+        control_data = results['controls'].get('positive')
+        if not control_data or control_data['status'] != 'ok':
             return {
                 'passed': False,
                 'message': "No positive control data available"
             }
 
-        control_data = results['controls']['positive']
-        if control_data['status'] != 'ok' or control_data['normalized'] is None:
+        atp_data = control_data['types'].get('atp')
+        if not atp_data or atp_data['status'] != 'ok' or atp_data['normalized'] is None:
             return {
                 'passed': False,
                 'message': "Positive control normalization data not available"
             }
 
-        norm_resp = control_data['normalized']['mean']
+        norm_resp = atp_data['normalized']['mean']
         passed = min_resp <= norm_resp <= max_resp
 
         if passed:
@@ -5615,50 +6019,217 @@ class DiagnosticTests:
             'message': message
         }
 
-    def check_neg_control(self, results, min_resp, max_resp):
-        """Check negative control normalized response is within range"""
-        if 'negative' not in results['controls']:
+    def check_ntc_baseline(self, results, max_value):
+        """Check NTC baseline value is below threshold"""
+        ntc_data = results['controls'].get('ntc')
+        if not ntc_data or ntc_data['status'] != 'ok':
             return {
-                'passed': False,
-                'message': "No negative control data available"
+                'passed': True,  # Pass if no NTC data (optional)
+                'message': "No NTC data available"
             }
 
-        control_data = results['controls']['negative']
-        if control_data['status'] != 'ok' or control_data['normalized'] is None:
-            return {
-                'passed': False,
-                'message': "Negative control normalization data not available"
-            }
+        # Check all NTC well types
+        all_passed = True
+        failed_types = []
 
-        norm_resp = control_data['normalized']['mean']
-        passed = min_resp <= norm_resp <= max_resp
+        for type_name, type_data in ntc_data['types'].items():
+            if type_data['status'] == 'ok' and 'raw_baseline' in type_data:
+                baseline_mean = type_data['raw_baseline']['mean']
+                if baseline_mean > max_value:
+                    all_passed = False
+                    failed_types.append(f"{type_name} (value: {baseline_mean:.1f})")
 
-        if passed:
-            message = f"Negative control normalized response ({norm_resp:.2f}%) is within range ({min_resp}% - {max_resp}%)"
+        if all_passed:
+            message = f"All NTC baseline values are below threshold ({max_value})"
         else:
-            message = f"Negative control normalized response ({norm_resp:.2f}%) is outside range ({min_resp}% - {max_resp}%)"
+            message = f"NTC baseline values above threshold ({max_value}) for: {', '.join(failed_types)}"
 
         return {
-            'passed': passed,
+            'passed': all_passed,
+            'message': message
+        }
+
+    def check_ntc_response(self, results, max_response):
+        """Check that NTC wells show no significant response"""
+        ntc_data = results['controls'].get('ntc')
+        if not ntc_data or ntc_data['status'] != 'ok':
+            return {
+                'passed': True,  # Pass if no NTC data (optional)
+                'message': "No NTC data available"
+            }
+
+        # Check all NTC well types
+        all_passed = True
+        failed_types = []
+
+        for type_name, type_data in ntc_data['types'].items():
+            if type_data['status'] == 'ok' and 'peak' in type_data:
+                peak_mean = type_data['peak']['mean']
+                if peak_mean > max_response:
+                    all_passed = False
+                    failed_types.append(f"{type_name} (peak: {peak_mean:.3f})")
+
+        if all_passed:
+            message = f"All NTC wells show minimal response (below {max_response})"
+        else:
+            message = f"NTC wells show responses above threshold ({max_response}) for: {', '.join(failed_types)}"
+
+        return {
+            'passed': all_passed,
             'message': message
         }
 
     def check_ionomycin(self, results, min_peak, max_cv):
         """Check ionomycin responses"""
-        # Look for ionmycin wells in the data
-        # For this demo, we'll assume the test passes
+        all_passed = True
+        failed_groups = []
+
+        # Check positive control ionomycin
+        control_data = results['controls'].get('positive')
+        if control_data and control_data['status'] == 'ok':
+            iono_data = control_data['types'].get('iono')
+            if iono_data and iono_data['status'] == 'ok':
+                peak = iono_data['peak']['mean']
+                cv = iono_data['peak']['cv']
+
+                if peak < min_peak:
+                    all_passed = False
+                    failed_groups.append(f"positive control (peak: {peak:.2f})")
+
+                if cv > max_cv:
+                    all_passed = False
+                    failed_groups.append(f"positive control (CV: {cv:.1f}%)")
+
+        # Check sample ionomycin responses
+        for sample_id, sample_data in results['samples'].items():
+            if sample_data['status'] == 'ok':
+                iono_data = sample_data['types'].get('iono')
+                if iono_data and iono_data['status'] == 'ok':
+                    peak = iono_data['peak']['mean']
+                    cv = iono_data['peak']['cv']
+
+                    if peak < min_peak:
+                        all_passed = False
+                        failed_groups.append(f"{sample_id} (peak: {peak:.2f})")
+
+                    if cv > max_cv:
+                        all_passed = False
+                        failed_groups.append(f"{sample_id} (CV: {cv:.1f}%)")
+
+        if all_passed:
+            message = f"All ionomycin responses adequate (>={min_peak}) with acceptable variability (<{max_cv}% CV)"
+        else:
+            message = f"Ionomycin response issues for: {', '.join(failed_groups)}"
+
         return {
-            'passed': True,
-            'message': f"Ionomycin response is adequate (>={min_peak}) with low variability (<{max_cv}% CV)"
+            'passed': all_passed,
+            'message': message
         }
 
     def check_atp(self, results, min_peak, max_cv):
         """Check ATP responses"""
-        # Look for ATP wells in the data
-        # For this demo, we'll assume the test passes
+        all_passed = True
+        failed_groups = []
+
+        # Check positive control ATP
+        control_data = results['controls'].get('positive')
+        if control_data and control_data['status'] == 'ok':
+            atp_data = control_data['types'].get('atp')
+            if atp_data and atp_data['status'] == 'ok':
+                peak = atp_data['peak']['mean']
+                cv = atp_data['peak']['cv']
+
+                if peak < min_peak:
+                    all_passed = False
+                    failed_groups.append(f"positive control (peak: {peak:.2f})")
+
+                if cv > max_cv:
+                    all_passed = False
+                    failed_groups.append(f"positive control (CV: {cv:.1f}%)")
+
+        # Check sample ATP responses
+        for sample_id, sample_data in results['samples'].items():
+            if sample_data['status'] == 'ok':
+                atp_data = sample_data['types'].get('atp')
+                if atp_data and atp_data['status'] == 'ok':
+                    peak = atp_data['peak']['mean']
+                    cv = atp_data['peak']['cv']
+
+                    if peak < min_peak:
+                        all_passed = False
+                        failed_groups.append(f"{sample_id} (peak: {peak:.2f})")
+
+                    if cv > max_cv:
+                        all_passed = False
+                        failed_groups.append(f"{sample_id} (CV: {cv:.1f}%)")
+
+        if all_passed:
+            message = f"All ATP responses adequate (>={min_peak}) with acceptable variability (<{max_cv}% CV)"
+        else:
+            message = f"ATP response issues for: {', '.join(failed_groups)}"
+
         return {
-            'passed': True,
-            'message': f"ATP response is adequate (>={min_peak}) with acceptable variability (<{max_cv}% CV)"
+            'passed': all_passed,
+            'message': message
+        }
+
+    def check_buffer(self, results, max_response, max_pct_atp):
+        """Check buffer responses are minimal"""
+        all_passed = True
+        failed_groups = []
+
+        # Check each sample's buffer wells against its ATP wells
+        for sample_id, sample_data in results['samples'].items():
+            if sample_data['status'] == 'ok':
+                buffer_data = sample_data['types'].get('buffer')
+                atp_data = sample_data['types'].get('atp')
+
+                if buffer_data and buffer_data['status'] == 'ok' and atp_data and atp_data['status'] == 'ok':
+                    buffer_peak = buffer_data['peak']['mean']
+                    atp_peak = atp_data['peak']['mean']
+
+                    # Check absolute buffer response
+                    if buffer_peak > max_response:
+                        all_passed = False
+                        failed_groups.append(f"{sample_id} (buffer peak: {buffer_peak:.3f})")
+
+                    # Check buffer as % of ATP
+                    if atp_peak > 0:
+                        buffer_pct = (buffer_peak / atp_peak) * 100
+                        if buffer_pct > max_pct_atp:
+                            all_passed = False
+                            failed_groups.append(f"{sample_id} (buffer/ATP: {buffer_pct:.1f}%)")
+
+        # Also check controls
+        for control_type, control_data in results['controls'].items():
+            if control_data['status'] == 'ok':
+                buffer_data = control_data['types'].get('buffer')
+                atp_data = control_data['types'].get('atp')
+
+                if buffer_data and buffer_data['status'] == 'ok' and atp_data and atp_data['status'] == 'ok':
+                    buffer_peak = buffer_data['peak']['mean']
+                    atp_peak = atp_data['peak']['mean']
+
+                    # Check absolute buffer response
+                    if buffer_peak > max_response:
+                        all_passed = False
+                        failed_groups.append(f"{control_type} (buffer peak: {buffer_peak:.3f})")
+
+                    # Check buffer as % of ATP
+                    if atp_peak > 0:
+                        buffer_pct = (buffer_peak / atp_peak) * 100
+                        if buffer_pct > max_pct_atp:
+                            all_passed = False
+                            failed_groups.append(f"{control_type} (buffer/ATP: {buffer_pct:.1f}%)")
+
+        if all_passed:
+            message = f"All buffer responses are minimal (<{max_response} and <{max_pct_atp}% of ATP)"
+        else:
+            message = f"Buffer response issues for: {', '.join(failed_groups)}"
+
+        return {
+            'passed': all_passed,
+            'message': message
         }
 
     def check_replicates(self, results, max_cv):
@@ -5666,21 +6237,25 @@ class DiagnosticTests:
         all_passed = True
         failed_groups = []
 
-        # Check controls
-        for control_type, control_data in results['controls'].items():
-            if control_data['status'] == 'ok':
-                cv = control_data['peak']['cv']
-                if cv > max_cv:
-                    all_passed = False
-                    failed_groups.append(f"{control_type} control")
-
-        # Check samples
+        # Check replicate CVs for ATP wells
         for sample_id, sample_data in results['samples'].items():
             if sample_data['status'] == 'ok':
-                cv = sample_data['peak']['cv']
-                if cv > max_cv:
-                    all_passed = False
-                    failed_groups.append(f"sample {sample_id}")
+                atp_data = sample_data['types'].get('atp')
+                if atp_data and atp_data['status'] == 'ok':
+                    cv = atp_data['peak']['cv']
+                    if cv > max_cv:
+                        all_passed = False
+                        failed_groups.append(f"{sample_id} ATP (CV: {cv:.1f}%)")
+
+        # Also check controls
+        for control_type, control_data in results['controls'].items():
+            if control_data['status'] == 'ok':
+                atp_data = control_data['types'].get('atp')
+                if atp_data and atp_data['status'] == 'ok':
+                    cv = atp_data['peak']['cv']
+                    if cv > max_cv:
+                        all_passed = False
+                        failed_groups.append(f"{control_type} ATP (CV: {cv:.1f}%)")
 
         if all_passed:
             message = f"All replicate CVs are below threshold ({max_cv}%)"
@@ -5693,7 +6268,7 @@ class DiagnosticTests:
         }
 
     def determine_diagnosis(self, results):
-        """Determine diagnosis for each sample based on test results"""
+        """Determine diagnosis for each sample based on test results and chosen threshold type"""
         # Check if all tests passed
         all_tests_passed = all(test['passed'] for test in results['tests'].values())
 
@@ -5706,29 +6281,61 @@ class DiagnosticTests:
                 }
             return
 
-        # For each sample, check the normalized ATP response
-        threshold = results['autism_risk_threshold']
+        # Get threshold settings
+        threshold_type = results['threshold_type']
+        threshold_value = results['threshold_value']
 
+        # For each sample, check the response based on chosen threshold type
         for sample_id, sample_data in results['samples'].items():
-            if sample_data['status'] != 'ok' or sample_data['normalized'] is None:
+            if sample_data['status'] != 'ok':
                 results['diagnosis'][sample_id] = {
                     'status': 'INVALID',
                     'message': "Cannot diagnose due to missing data"
                 }
                 continue
 
-            norm_resp = sample_data['normalized']['mean']
+            atp_data = sample_data['types'].get('atp')
+            if not atp_data or atp_data['status'] != 'ok':
+                results['diagnosis'][sample_id] = {
+                    'status': 'INVALID',
+                    'message': "Cannot diagnose due to missing ATP data"
+                }
+                continue
 
-            if norm_resp <= threshold:
+            # Get the appropriate normalized value based on threshold type
+            if "Positive Control-Normalized" in threshold_type:
+                # Use double normalization (ionomycin and positive control)
+                if not atp_data.get('pc_normalized'):
+                    results['diagnosis'][sample_id] = {
+                        'status': 'INVALID',
+                        'message': "Cannot diagnose: positive control normalized data not available"
+                    }
+                    continue
+
+                norm_resp = atp_data['pc_normalized']['mean']
+
+            else:
+                # Use standard ionomycin normalization
+                if not atp_data.get('normalized'):
+                    results['diagnosis'][sample_id] = {
+                        'status': 'INVALID',
+                        'message': "Cannot diagnose: ionomycin normalized data not available"
+                    }
+                    continue
+
+                norm_resp = atp_data['normalized']['mean']
+
+            # Make diagnosis based on threshold
+            if norm_resp <= threshold_value:
                 results['diagnosis'][sample_id] = {
                     'status': 'POSITIVE',
-                    'message': f"Autism risk POSITIVE: ATP response ({norm_resp:.2f}%) is below threshold ({threshold}%)",
+                    'message': f"Autism risk POSITIVE: Response ({norm_resp:.2f}%) is below threshold ({threshold_value}%)",
                     'value': norm_resp
                 }
             else:
                 results['diagnosis'][sample_id] = {
                     'status': 'NEGATIVE',
-                    'message': f"Autism risk NEGATIVE: ATP response ({norm_resp:.2f}%) is above threshold ({threshold}%)",
+                    'message': f"Autism risk NEGATIVE: Response ({norm_resp:.2f}%) is above threshold ({threshold_value}%)",
                     'value': norm_resp
                 }
 
@@ -5737,11 +6344,13 @@ class DiagnosticTests:
         if not well_id or len(well_id) < 2:
             return None, None
 
-        row = ord(well_id[0]) - ord('A')
-        col = int(well_id[1:]) - 1
-
-        return row, col
-
+        try:
+            row = ord(well_id[0].upper()) - ord('A')  # Convert A->0, B->1, etc.
+            col = int(well_id[1:]) - 1  # Convert 1->0, 2->1, etc.
+            return row, col
+        except (ValueError, IndexError):
+            self.logger.error(f"Invalid well ID format: {well_id}")
+            return None, None
 
 
 class MatplotlibCanvas(FigureCanvas):
