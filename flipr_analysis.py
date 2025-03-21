@@ -2898,7 +2898,7 @@ class WellPlateLabeler(QMainWindow):
             (self.summary_plot_window.time_to_peak_plot, len(grouped_data))
         ]:
             plot.axes.set_xticks(range(n_groups))
-            plot.axes.set_xticklabels(all_group_names)
+            plot.axes.set_xticklabels(all_group_names, rotation=45, ha='right')
             plot.axes.set_xlim(-0.5, n_groups - 0.5)
 
         # Set x-tick labels for normalized plot (only non-ionomycin groups)
@@ -2907,7 +2907,7 @@ class WellPlateLabeler(QMainWindow):
                                    if "ionomycin" not in name.lower()]
 
             self.summary_plot_window.normalized_plot.axes.set_xticks(range(len(non_ionomycin_groups)))
-            self.summary_plot_window.normalized_plot.axes.set_xticklabels(non_ionomycin_groups)
+            self.summary_plot_window.normalized_plot.axes.set_xticklabels(non_ionomycin_groups, rotation=45, ha='right')
             self.summary_plot_window.normalized_plot.axes.set_xlim(-0.5, len(non_ionomycin_groups) - 0.5)
 
         # Set x-tick labels for positive control normalized plot
@@ -2917,7 +2917,7 @@ class WellPlateLabeler(QMainWindow):
 
             if pc_normalized_groups:
                 self.summary_plot_window.pc_normalized_plot.axes.set_xticks(range(len(pc_normalized_groups)))
-                self.summary_plot_window.pc_normalized_plot.axes.set_xticklabels(pc_normalized_groups)
+                self.summary_plot_window.pc_normalized_plot.axes.set_xticklabels(pc_normalized_groups, rotation=45, ha='right')
                 self.summary_plot_window.pc_normalized_plot.axes.set_xlim(-0.5, len(pc_normalized_groups) - 0.5)
 
         # Apply tight layout and draw all plots
