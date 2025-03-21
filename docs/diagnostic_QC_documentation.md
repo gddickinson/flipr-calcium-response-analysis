@@ -94,18 +94,18 @@ The DiagnosticTests class identifies wells based on their column position and la
 for idx in range(96):
     well_data = self.parent.well_data[idx]
     well_id = well_data['well_id']
-    
+
     # Skip wells without data
     if not well_id or well_id not in self.parent.dff_data.index:
         continue
-        
+
     # Get well location
     row, col = self.get_row_col(well_id)
-    
+
     # Determine well type based on label
     label = well_data.get("label", "").lower()
     sample_id = well_data.get("sample_id", "default")
-    
+
     # Group wells based on column and label
     if col in sample_cols:
         if "atp" in label:
@@ -124,7 +124,7 @@ Each diagnostic test validates a specific aspect of data quality. All tests must
 
 #### check_artifact
 - **Purpose**: Ensures the injection artifact is within acceptable limits
-- **Parameters**: 
+- **Parameters**:
   - `max_change`: Maximum allowable signal change during injection (default: 0.2)
   - `max_frames`: Maximum time to return to baseline (frames) (default: 5)
 - **Implementation**: Examines signal change during the injection window and ensures recovery afterward
@@ -136,15 +136,15 @@ These tests validate the raw signal quality before normalization.
 
 #### check_raw_baseline_min
 - **Purpose**: Ensures raw baseline is above minimum detection threshold
-- **Parameters**: 
+- **Parameters**:
   - `min_value`: Minimum acceptable baseline value (default: 100)
-- **Implementation**: 
+- **Implementation**:
   ```python
   def check_raw_min(self, results, min_value):
       """Check raw baseline minimum is above threshold"""
       all_passed = True
       failed_groups = []
-      
+
       # Check controls and samples (ATP wells)
       for control_type, control_data in results['controls'].items():
           if control_data['status'] == 'ok':
@@ -153,9 +153,9 @@ These tests validate the raw signal quality before normalization.
                       if type_data['raw_baseline']['min'] < min_value:
                           all_passed = False
                           failed_groups.append(f"{control_type} {type_name}")
-                          
+
       # Similar check for sample ATP wells
-      
+
       # Return result
       return {
           'passed': all_passed,
@@ -166,14 +166,14 @@ These tests validate the raw signal quality before normalization.
 
 #### check_raw_baseline_max
 - **Purpose**: Ensures baseline is below saturation
-- **Parameters**: 
+- **Parameters**:
   - `max_value`: Maximum acceptable baseline value (default: 5000)
 - **Implementation**: Compares raw baseline against upper limit
 - **Failure Conditions**: High baselines indicate potential saturation or excessive dye loading
 
 #### check_raw_baseline_mean
 - **Purpose**: Ensures baseline is within optimal detection range
-- **Parameters**: 
+- **Parameters**:
   - `min_value`: Minimum acceptable mean (default: 500)
   - `max_value`: Maximum acceptable mean (default: 3000)
 - **Implementation**: Analyzes mean baseline value across all wells
@@ -181,7 +181,7 @@ These tests validate the raw signal quality before normalization.
 
 #### check_raw_baseline_sd
 - **Purpose**: Validates baseline stability
-- **Parameters**: 
+- **Parameters**:
   - `max_sd`: Maximum acceptable standard deviation (default: 200)
 - **Implementation**: Calculates SD of the baseline period
 - **Failure Conditions**: High SD indicates unstable baseline or poor signal quality
@@ -192,15 +192,15 @@ These tests validate the normalized calcium response signal quality.
 
 #### check_dff_baseline
 - **Purpose**: Ensures ΔF/F₀ baseline is approximately zero
-- **Parameters**: 
+- **Parameters**:
   - `max_deviation`: Maximum acceptable deviation from zero (default: 0.05)
-- **Implementation**: 
+- **Implementation**:
   ```python
   def check_dff_baseline(self, results, max_deviation):
       """Check ΔF/F₀ baseline is close to zero"""
       all_passed = True
       failed_groups = []
-      
+
       # Check controls (excluding NTC)
       for control_type, control_data in results['controls'].items():
           if control_type != 'ntc' and control_data['status'] == 'ok':
@@ -210,7 +210,7 @@ These tests validate the normalized calcium response signal quality.
                       if mean > max_deviation:
                           all_passed = False
                           failed_groups.append(f"{control_type} {type_name}")
-                          
+
       # Return result
       return {
           'passed': all_passed,
@@ -221,7 +221,7 @@ These tests validate the normalized calcium response signal quality.
 
 #### check_dff_return
 - **Purpose**: Validates signal return to baseline after response
-- **Parameters**: 
+- **Parameters**:
   - `max_deviation`: Maximum deviation at end (default: 0.05)
   - `time_point`: Time to check (s) (default: 60)
 - **Implementation**: Checks end-of-trace signal level
@@ -229,7 +229,7 @@ These tests validate the normalized calcium response signal quality.
 
 #### check_peak_height
 - **Purpose**: Ensures response magnitude is within physiological range
-- **Parameters**: 
+- **Parameters**:
   - `min_height`: Minimum peak height (default: 0.1)
   - `max_height`: Maximum peak height (default: 3.0)
 - **Implementation**: Analyzes peak ΔF/F₀ values
@@ -237,7 +237,7 @@ These tests validate the normalized calcium response signal quality.
 
 #### check_peak_width
 - **Purpose**: Validates response duration
-- **Parameters**: 
+- **Parameters**:
   - `min_width`: Minimum width (s) (default: 5)
   - `max_width`: Maximum width (s) (default: 30)
 - **Implementation**: Calculates full-width at half-maximum (FWHM)
@@ -245,7 +245,7 @@ These tests validate the normalized calcium response signal quality.
 
 #### check_auc
 - **Purpose**: Ensures total calcium response is within expected range
-- **Parameters**: 
+- **Parameters**:
   - `min_auc`: Minimum area under curve (default: 1.0)
   - `max_auc`: Maximum area under curve (default: 100.0)
 - **Implementation**: Calculates area under ΔF/F₀ curve
@@ -257,10 +257,10 @@ These tests validate the quality of control wells and ensure proper normalizatio
 
 #### check_pos_control
 - **Purpose**: Ensures positive control response is within expected range
-- **Parameters**: 
+- **Parameters**:
   - `min_resp`: Minimum normalized response (%) (default: 15)
   - `max_resp`: Maximum normalized response (%) (default: 50)
-- **Implementation**: 
+- **Implementation**:
   ```python
   def check_pos_control(self, results, min_resp, max_resp):
       """Check positive control normalized response is within range"""
@@ -270,17 +270,17 @@ These tests validate the quality of control wells and ensure proper normalizatio
               'passed': False,
               'message': "No positive control data available"
           }
-      
+
       atp_data = control_data['types'].get('atp')
       if not atp_data or atp_data['status'] != 'ok' or atp_data['normalized'] is None:
           return {
               'passed': False,
               'message': "Positive control normalization data not available"
           }
-      
+
       norm_resp = atp_data['normalized']['mean']
       passed = min_resp <= norm_resp <= max_resp
-      
+
       return {
           'passed': passed,
           'message': message
@@ -290,21 +290,21 @@ These tests validate the quality of control wells and ensure proper normalizatio
 
 #### check_ntc_baseline
 - **Purpose**: Ensures no-cell control has low background
-- **Parameters**: 
+- **Parameters**:
   - `max_value`: Maximum baseline value (default: 50)
 - **Implementation**: Examines raw signal from NTC wells
 - **Failure Conditions**: High NTC signal suggests contamination or non-specific signal
 
 #### check_ntc_response
 - **Purpose**: Confirms no-cell control shows no response
-- **Parameters**: 
+- **Parameters**:
   - `max_response`: Maximum allowable response (default: 0.05)
 - **Implementation**: Checks peak ΔF/F₀ in NTC wells
 - **Failure Conditions**: NTC response indicates contamination or artifacts
 
 #### check_ionomycin
 - **Purpose**: Validates maximum calcium response reference
-- **Parameters**: 
+- **Parameters**:
   - `min_peak`: Minimum peak ΔF/F₀ (default: 1.0)
   - `max_cv`: Maximum coefficient of variation (%) (default: 20)
 - **Implementation**: Analyzes ionomycin response magnitude and consistency
@@ -312,7 +312,7 @@ These tests validate the quality of control wells and ensure proper normalizatio
 
 #### check_atp
 - **Purpose**: Ensures ATP response is detectable and consistent
-- **Parameters**: 
+- **Parameters**:
   - `min_peak`: Minimum peak ΔF/F₀ (default: 0.1)
   - `max_cv`: Maximum coefficient of variation (%) (default: 25)
 - **Implementation**: Analyzes ATP response magnitude and consistency
@@ -320,49 +320,46 @@ These tests validate the quality of control wells and ensure proper normalizatio
 
 #### check_buffer
 - **Purpose**: Confirms buffer response is minimal
-- **Parameters**: 
+- **Parameters**:
   - `max_response`: Maximum ΔF/F₀ (default: 0.1)
-  - `max_pct_atp`: Maximum % of ATP response (default: 15)
-- **Implementation**: 
+  - `max_baseline`: Maximum baseline value (default: 50.0)
+- **Implementation**:
   ```python
-  def check_buffer(self, results, max_response, max_pct_atp):
-      """Check buffer responses are minimal"""
-      all_passed = True
-      failed_groups = []
-      
-      # Check each sample's buffer wells against its ATP wells
-      for sample_id, sample_data in results['samples'].items():
-          if sample_data['status'] == 'ok':
-              buffer_data = sample_data['types'].get('buffer')
-              atp_data = sample_data['types'].get('atp')
-              
-              if buffer_data and buffer_data['status'] == 'ok' and atp_data and atp_data['status'] == 'ok':
-                  buffer_peak = buffer_data['peak']['mean']
-                  atp_peak = atp_data['peak']['mean']
-                  
-                  # Check absolute buffer response
-                  if buffer_peak > max_response:
-                      all_passed = False
-                      failed_groups.append(f"{sample_id} (buffer peak: {buffer_peak:.3f})")
-                  
-                  # Check buffer as % of ATP
-                  if atp_peak > 0:
-                      buffer_pct = (buffer_peak / atp_peak) * 100
-                      if buffer_pct > max_pct_atp:
-                          all_passed = False
-                          failed_groups.append(f"{sample_id} (buffer/ATP: {buffer_pct:.1f}%)")
-      
-      # Return result
-      return {
-          'passed': all_passed,
-          'message': message
-      }
+    def check_buffer(self, results, max_response, max_baseline):
+        """Check buffer responses are minimal and baseline is acceptable"""
+        all_passed = True
+        failed_groups = []
+
+        # Check each sample's buffer wells
+        for sample_id, sample_data in results['samples'].items():
+            if sample_data['status'] == 'ok':
+                buffer_data = sample_data['types'].get('buffer')
+
+                if buffer_data and buffer_data['status'] == 'ok':
+                    # Check buffer baseline
+                    if 'raw_baseline' in buffer_data:
+                        baseline_mean = buffer_data['raw_baseline']['mean']
+                        if baseline_mean > max_baseline:
+                            all_passed = False
+                            failed_groups.append(f"{sample_id} (baseline: {baseline_mean:.1f})")
+
+                    # Check buffer response
+                    buffer_peak = buffer_data['peak']['mean']
+                    if buffer_peak > max_response:
+                        all_passed = False
+                        failed_groups.append(f"{sample_id} (peak: {buffer_peak:.3f})")
+
+        # Return result
+        return {
+            'passed': all_passed,
+            'message': message
+        }
   ```
-- **Failure Conditions**: High buffer response suggests non-specific activation
+- **Failure Conditions**: High buffer baseline or response suggests non-specific activation
 
 #### check_replicates
 - **Purpose**: Validates replicate consistency
-- **Parameters**: 
+- **Parameters**:
   - `max_cv`: Maximum CV for triplicates (%) (default: 20)
 - **Implementation**: Calculates coefficient of variation between replicates
 - **Failure Conditions**: High variability between replicates reduces reliability
@@ -373,7 +370,7 @@ The system offers two normalization approaches:
 
 ### Ionomycin Normalization
 - **Purpose**: Normalize ATP responses to maximum calcium signal
-- **Implementation**: 
+- **Implementation**:
   ```python
   # For each well
   peak = dff_data.loc[well_id].max()
@@ -384,11 +381,11 @@ The system offers two normalization approaches:
 
 ### Positive Control Normalization
 - **Purpose**: Normalize to a known reference sample
-- **Implementation**: 
+- **Implementation**:
   ```python
   # First normalize to ionomycin
   iono_normalized = (peak / ionomycin_response) * 100
-  
+
   # Then normalize to positive control
   pc_normalized = (iono_normalized / positive_control_value) * 100
   ```
@@ -412,7 +409,7 @@ def determine_diagnosis(self, results):
     """Determine diagnosis for each sample based on test results and chosen threshold type"""
     # Check if all tests passed
     all_tests_passed = all(test['passed'] for test in results['tests'].values())
-    
+
     # If any test failed, we can't make a diagnosis
     if not all_tests_passed:
         for sample_id in results['samples'].keys():
@@ -421,11 +418,11 @@ def determine_diagnosis(self, results):
                 'message': "Cannot diagnose due to failed quality control tests"
             }
         return
-    
+
     # Get threshold settings
     threshold_type = results['threshold_type']
     threshold_value = results['threshold_value']
-    
+
     # For each sample, check the response based on chosen threshold type
     for sample_id, sample_data in results['samples'].items():
         # Get appropriate normalized value
@@ -435,7 +432,7 @@ def determine_diagnosis(self, results):
         else:
             # Use standard ionomycin normalization
             norm_resp = atp_data['normalized']['mean']
-        
+
         # Make diagnosis based on threshold
         if norm_resp <= threshold_value:
             results['diagnosis'][sample_id] = {
@@ -456,7 +453,7 @@ def determine_diagnosis(self, results):
 1. **Quality Control**: All tests must pass for a valid diagnosis
 2. **Normalization**: ATP response is normalized using the selected method
 3. **Threshold Application**: Normalized response is compared to threshold
-4. **Status Assignment**: 
+4. **Status Assignment**:
    - POSITIVE: Below threshold
    - NEGATIVE: Above threshold
    - INVALID: QC tests failed or data missing
