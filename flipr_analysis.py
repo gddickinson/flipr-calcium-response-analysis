@@ -5145,6 +5145,13 @@ class DiagnosisOptionsTab(QWidget):
         buffer_group = QGroupBox("Buffer Well Tests")
         buffer_layout = QFormLayout()
 
+        # Add max baseline value for buffer wells
+        self.buffer_max_baseline = QDoubleSpinBox()
+        self.buffer_max_baseline.setRange(0, 1000)
+        self.buffer_max_baseline.setValue(50.0)  # Same default as NTC
+        self.buffer_max_baseline.setDecimals(1)
+        buffer_layout.addRow("Maximum Baseline Value:", self.buffer_max_baseline)
+
         # Max buffer response
         self.buffer_max_response = QDoubleSpinBox()
         self.buffer_max_response.setRange(0, 1.0)
@@ -5153,13 +5160,6 @@ class DiagnosisOptionsTab(QWidget):
         self.buffer_max_response.setSingleStep(0.01)
         buffer_layout.addRow("Maximum Response (ΔF/F₀):", self.buffer_max_response)
 
-        # Max buffer response as % of ATP
-        self.buffer_max_pct_atp = QDoubleSpinBox()
-        self.buffer_max_pct_atp.setRange(0, 100)
-        self.buffer_max_pct_atp.setValue(15.0)
-        self.buffer_max_pct_atp.setDecimals(1)
-        self.buffer_max_pct_atp.setSuffix(" %")
-        buffer_layout.addRow("Maximum Response (% of ATP):", self.buffer_max_pct_atp)
 
         buffer_group.setLayout(buffer_layout)
         scroll_layout.addWidget(buffer_group)
@@ -5210,12 +5210,12 @@ class DiagnosisOptionsTab(QWidget):
                 ("check_pos_control", "Check positive control",
                  ("Minimum normalized response (%)", 15),
                  ("Maximum normalized response (%)", 50)),
-                ("check_ntc_baseline", "Check NTC baseline",
-                 ("Maximum baseline value", 50),
-                 ("", None)),
-                ("check_ntc_response", "Check NTC response",
-                 ("Maximum response (ΔF/F₀)", 0.05),
-                 ("", None)),
+                #("check_ntc_baseline", "Check NTC baseline",
+                #("Maximum baseline value", 50),
+                 #("", None)),
+                #("check_ntc_response", "Check NTC response",
+                 #("Maximum response (ΔF/F₀)", 0.05),
+                 #("", None)),
                 ("check_ionomycin", "Check ionomycin response",
                  ("Minimum peak ΔF/F₀", 1.0),
                  ("Maximum CV (%)", 20)),
@@ -5252,7 +5252,13 @@ class DiagnosisOptionsTab(QWidget):
                 param1_label = QLabel(param1[0] + ":")
                 param1_input = QDoubleSpinBox()
                 param1_input.setDecimals(3)
-                param1_input.setRange(0, 10000)
+
+                # Special handling for AUC minimum value to allow negative values
+                if test_id == 'check_auc' and param1[0].startswith("Minimum"):
+                    param1_input.setRange(-1000, 10000)  # Allow negative values for AUC minimum
+                else:
+                    param1_input.setRange(0, 10000)  # Default range for other parameters
+
                 param1_input.setValue(param1[1])
                 test_layout.addWidget(param1_label)
                 test_layout.addWidget(param1_input)
@@ -5325,8 +5331,9 @@ class DiagnosisOptionsTab(QWidget):
         self.ntc_max_baseline.valueChanged.connect(self.update_live_config)
         self.ntc_max_response.valueChanged.connect(self.update_live_config)
 
+        self.buffer_max_baseline.valueChanged.connect(self.update_live_config)
         self.buffer_max_response.valueChanged.connect(self.update_live_config)
-        self.buffer_max_pct_atp.valueChanged.connect(self.update_live_config)
+
 
         self.threshold_type.currentIndexChanged.connect(self.update_live_config)
         self.autism_threshold.valueChanged.connect(self.update_live_config)
@@ -5420,8 +5427,8 @@ class DiagnosisOptionsTab(QWidget):
 
         # Update buffer tests
         self.live_config['buffer_tests'] = {
-            'max_response': self.buffer_max_response.value(),
-            'max_pct_atp': self.buffer_max_pct_atp.value()
+            'max_baseline': self.buffer_max_baseline.value(),
+            'max_response': self.buffer_max_response.value()
         }
 
         # Update thresholds
@@ -5429,6 +5436,14 @@ class DiagnosisOptionsTab(QWidget):
             'type': self.threshold_type.currentText(),
             'value': self.autism_threshold.value()
         }
+
+        # Add this new section to update all test parameters
+        for test_id, widgets in self.test_widgets.items():
+            self.live_config['tests'][test_id] = {
+                'enabled': widgets['checkbox'].isChecked(),
+                'param1': widgets['param1_input'].value(),
+                'param2': widgets['param2_input'].value() if widgets['param2_input'] else None
+            }
 
     def update_test_config(self, test_id):
         """Update a specific test's configuration"""
@@ -5521,74 +5536,145 @@ class DiagnosisOptionsTab(QWidget):
 
     def set_config(self, config):
         """Set diagnosis configuration from a dictionary"""
-        # Store the loaded config
-        self.live_config = config
-
-        # Now update the UI elements
         try:
+            # Store the loaded config - Deep copy to avoid reference issues
+            self.live_config = json.loads(json.dumps(config))
+
+            self.logger.info("Loading configuration: Starting UI updates")
+
+            # Block signals temporarily to avoid triggering updates while loading
+            self.blockSignals(True)
+
             # Set control columns
             controls = config.get('controls', {})
+            self.logger.info(f"Loading controls: {controls}")
 
-            if 'samples' in controls:
-                self.samples_from.setValue(controls['samples'][0])
-                self.samples_to.setValue(controls['samples'][1])
+            # Use safer defaults if keys are not present
+            samples_from = controls.get('samples', [1, 10])[0]
+            samples_to = controls.get('samples', [1, 10])[1]
+            ntc_from = controls.get('ntc', [11, 11])[0]
+            ntc_to = controls.get('ntc', [11, 11])[1]
+            pos_from = controls.get('positive', [12, 12])[0]
+            pos_to = controls.get('positive', [12, 12])[1]
 
-            if 'ntc' in controls:
-                self.ntc_control_from.setValue(controls['ntc'][0])
-                self.ntc_control_to.setValue(controls['ntc'][1])
-
-            if 'positive' in controls:
-                self.pos_control_from.setValue(controls['positive'][0])
-                self.pos_control_to.setValue(controls['positive'][1])
+            # Update UI with proper value checking
+            try:
+                self.samples_from.setValue(int(samples_from))
+                self.samples_to.setValue(int(samples_to))
+                self.ntc_control_from.setValue(int(ntc_from))
+                self.ntc_control_to.setValue(int(ntc_to))
+                self.pos_control_from.setValue(int(pos_from))
+                self.pos_control_to.setValue(int(pos_to))
+                self.logger.info("Updated control columns UI")
+            except (ValueError, TypeError) as e:
+                self.logger.error(f"Error setting control columns: {str(e)}")
 
             # Set well layout
             well_layout = config.get('well_layout', {})
-            if 'atp_wells' in well_layout:
-                self.atp_wells.setValue(well_layout['atp_wells'])
-            if 'iono_wells' in well_layout:
-                self.iono_wells.setValue(well_layout['iono_wells'])
-            if 'buffer_wells' in well_layout:
-                self.buffer_wells.setValue(well_layout['buffer_wells'])
+            self.logger.info(f"Loading well layout: {well_layout}")
+
+            try:
+                if 'atp_wells' in well_layout:
+                    self.atp_wells.setValue(int(well_layout['atp_wells']))
+                if 'iono_wells' in well_layout:
+                    self.iono_wells.setValue(int(well_layout['iono_wells']))
+                if 'buffer_wells' in well_layout:
+                    self.buffer_wells.setValue(int(well_layout['buffer_wells']))
+                self.logger.info("Updated well layout UI")
+            except (ValueError, TypeError) as e:
+                self.logger.error(f"Error setting well layout: {str(e)}")
 
             # Set NTC tests
             ntc_tests = config.get('ntc_tests', {})
-            if 'max_baseline' in ntc_tests:
-                self.ntc_max_baseline.setValue(ntc_tests['max_baseline'])
-            if 'max_response' in ntc_tests:
-                self.ntc_max_response.setValue(ntc_tests['max_response'])
+            self.logger.info(f"Loading NTC tests: {ntc_tests}")
+
+            try:
+                if 'max_baseline' in ntc_tests:
+                    self.ntc_max_baseline.setValue(float(ntc_tests['max_baseline']))
+                if 'max_response' in ntc_tests:
+                    self.ntc_max_response.setValue(float(ntc_tests['max_response']))
+                self.logger.info("Updated NTC tests UI")
+            except (ValueError, TypeError) as e:
+                self.logger.error(f"Error setting NTC tests: {str(e)}")
 
             # Set buffer tests
             buffer_tests = config.get('buffer_tests', {})
-            if 'max_response' in buffer_tests:
-                self.buffer_max_response.setValue(buffer_tests['max_response'])
-            if 'max_pct_atp' in buffer_tests:
-                self.buffer_max_pct_atp.setValue(buffer_tests['max_pct_atp'])
+            self.logger.info(f"Loading buffer tests: {buffer_tests}")
+
+            try:
+                if 'max_baseline' in buffer_tests:
+                    self.buffer_max_baseline.setValue(float(buffer_tests['max_baseline']))
+                if 'max_response' in buffer_tests:
+                    self.buffer_max_response.setValue(float(buffer_tests['max_response']))
+                # Remove handling for 'max_pct_atp'
+                self.logger.info("Updated buffer tests UI")
+            except (ValueError, TypeError) as e:
+                self.logger.error(f"Error setting buffer tests: {str(e)}")
+
 
             # Set thresholds
             thresholds = config.get('thresholds', {})
-            if 'type' in thresholds:
-                index = self.threshold_type.findText(thresholds['type'])
-                if index >= 0:
-                    self.threshold_type.setCurrentIndex(index)
-            if 'value' in thresholds:
-                self.autism_threshold.setValue(thresholds['value'])
+            self.logger.info(f"Loading thresholds: {thresholds}")
+
+            try:
+                if 'type' in thresholds:
+                    type_text = str(thresholds['type'])
+                    index = self.threshold_type.findText(type_text)
+                    if index >= 0:
+                        self.threshold_type.setCurrentIndex(index)
+                        self.logger.info(f"Set threshold type to index {index}: {type_text}")
+                    else:
+                        self.logger.warning(f"Threshold type '{type_text}' not found in combobox")
+
+                if 'value' in thresholds:
+                    self.autism_threshold.setValue(float(thresholds['value']))
+                self.logger.info("Updated thresholds UI")
+            except (ValueError, TypeError) as e:
+                self.logger.error(f"Error setting thresholds: {str(e)}")
 
             # Set test configurations
             tests = config.get('tests', {})
+            self.logger.info(f"Loading {len(tests)} test configurations")
+
             for test_id, test_config in tests.items():
-                if test_id in self.test_widgets:
-                    widgets = self.test_widgets[test_id]
-                    widgets['checkbox'].setChecked(test_config.get('enabled', True))
-                    widgets['param1_input'].setValue(test_config.get('param1', 0))
-                    if widgets['param2_input'] and 'param2' in test_config:
-                        widgets['param2_input'].setValue(test_config['param2'])
+                try:
+                    if test_id in self.test_widgets:
+                        widgets = self.test_widgets[test_id]
+
+                        # Update checkbox
+                        enabled = test_config.get('enabled', True)
+                        widgets['checkbox'].setChecked(bool(enabled))
+
+                        # Update param1
+                        if 'param1' in test_config and test_config['param1'] is not None:
+                            widgets['param1_input'].setValue(float(test_config['param1']))
+
+                        # Update param2 if it exists
+                        if widgets['param2_input'] and 'param2' in test_config and test_config['param2'] is not None:
+                            widgets['param2_input'].setValue(float(test_config['param2']))
+
+                        self.logger.info(f"Updated test '{test_id}' UI")
+                    else:
+                        self.logger.warning(f"Test '{test_id}' not found in widgets")
+                except Exception as e:
+                    self.logger.error(f"Error setting test '{test_id}': {str(e)}")
+
+            # Unblock signals after setting all values
+            self.blockSignals(False)
 
             # Validate settings
             self.validate_column_selections()
             self.validate_well_count()
 
+            self.logger.info("Configuration loaded successfully")
+
+            # Force a complete refresh by explicitly updating the config from UI widgets
+            self.update_live_config()
+
         except Exception as e:
-            logger.error(f"Error setting diagnosis configuration: {str(e)}")
+            self.logger.error(f"Error setting diagnosis configuration: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             QMessageBox.warning(self, "Configuration Error",
                              f"There was an error loading the configuration: {str(e)}")
 
@@ -5642,8 +5728,8 @@ class DiagnosisOptionsTab(QWidget):
                 'max_response': 0.05
             },
             'buffer_tests': {
-                'max_response': 0.1,
-                'max_pct_atp': 15.0
+                'max_baseline': 50.0,
+                'max_response': 0.1
             },
             'thresholds': {
                 'type': "Positive Control-Normalized ATP Response",
@@ -5913,14 +5999,15 @@ class DiagnosticTests:
                 # Apply specific parameter overrides for special cases
                 if test_id == 'check_ntc_baseline' and 'ntc_tests' in config:
                     param1 = config['ntc_tests'].get('max_baseline', param1)
-                    self.logger.info(f"Using NTC baseline max value: {param1}")
+                    self.logger.info(f"Using NTC baseline max value from panel: {param1}")
                 elif test_id == 'check_ntc_response' and 'ntc_tests' in config:
                     param1 = config['ntc_tests'].get('max_response', param1)
-                    self.logger.info(f"Using NTC response max value: {param1}")
+                    self.logger.info(f"Using NTC response max value from panel: {param1}")
                 elif test_id == 'check_buffer' and 'buffer_tests' in config:
                     param1 = config['buffer_tests'].get('max_response', param1)
-                    param2 = config['buffer_tests'].get('max_pct_atp', param2)
-                    self.logger.info(f"Using buffer test params: {param1}, {param2}")
+                    param2 = config['buffer_tests'].get('max_baseline', param2)
+                    self.logger.info(f"Using buffer test params from panel: {param1}, {param2}")
+
 
                 # Execute the appropriate test directly - no indirection
                 try:
@@ -6562,59 +6649,53 @@ class DiagnosticTests:
             'message': message
         }
 
-    def check_buffer(self, results, max_response, max_pct_atp):
-        """Check buffer responses are minimal"""
+    def check_buffer(self, results, max_response, max_baseline):
+        """Check buffer responses are minimal and baseline is acceptable"""
         all_passed = True
         failed_groups = []
 
-        # Check each sample's buffer wells against its ATP wells
+        # Check each sample's buffer wells
         for sample_id, sample_data in results['samples'].items():
             if sample_data['status'] == 'ok':
                 buffer_data = sample_data['types'].get('buffer')
-                atp_data = sample_data['types'].get('atp')
 
-                if buffer_data and buffer_data['status'] == 'ok' and atp_data and atp_data['status'] == 'ok':
+                if buffer_data and buffer_data['status'] == 'ok':
+                    # Check buffer baseline
+                    if 'raw_baseline' in buffer_data:
+                        baseline_mean = buffer_data['raw_baseline']['mean']
+                        if baseline_mean > max_baseline:
+                            all_passed = False
+                            failed_groups.append(f"{sample_id} (baseline: {baseline_mean:.1f})")
+
+                    # Check buffer response
                     buffer_peak = buffer_data['peak']['mean']
-                    atp_peak = atp_data['peak']['mean']
-
-                    # Check absolute buffer response
                     if buffer_peak > max_response:
                         all_passed = False
-                        failed_groups.append(f"{sample_id} (buffer peak: {buffer_peak:.3f})")
-
-                    # Check buffer as % of ATP
-                    if atp_peak > 0:
-                        buffer_pct = (buffer_peak / atp_peak) * 100
-                        if buffer_pct > max_pct_atp:
-                            all_passed = False
-                            failed_groups.append(f"{sample_id} (buffer/ATP: {buffer_pct:.1f}%)")
+                        failed_groups.append(f"{sample_id} (peak: {buffer_peak:.3f})")
 
         # Also check controls
         for control_type, control_data in results['controls'].items():
             if control_data['status'] == 'ok':
                 buffer_data = control_data['types'].get('buffer')
-                atp_data = control_data['types'].get('atp')
 
-                if buffer_data and buffer_data['status'] == 'ok' and atp_data and atp_data['status'] == 'ok':
+                if buffer_data and buffer_data['status'] == 'ok':
+                    # Check buffer baseline
+                    if 'raw_baseline' in buffer_data:
+                        baseline_mean = buffer_data['raw_baseline']['mean']
+                        if baseline_mean > max_baseline:
+                            all_passed = False
+                            failed_groups.append(f"{control_type} (baseline: {baseline_mean:.1f})")
+
+                    # Check buffer response
                     buffer_peak = buffer_data['peak']['mean']
-                    atp_peak = atp_data['peak']['mean']
-
-                    # Check absolute buffer response
                     if buffer_peak > max_response:
                         all_passed = False
-                        failed_groups.append(f"{control_type} (buffer peak: {buffer_peak:.3f})")
-
-                    # Check buffer as % of ATP
-                    if atp_peak > 0:
-                        buffer_pct = (buffer_peak / atp_peak) * 100
-                        if buffer_pct > max_pct_atp:
-                            all_passed = False
-                            failed_groups.append(f"{control_type} (buffer/ATP: {buffer_pct:.1f}%)")
+                        failed_groups.append(f"{control_type} (peak: {buffer_peak:.3f})")
 
         if all_passed:
-            message = f"All buffer responses are minimal (<{max_response} and <{max_pct_atp}% of ATP)"
+            message = f"All buffer baseline values are below {max_baseline} and responses are minimal (<{max_response} ΔF/F₀)"
         else:
-            message = f"Buffer response issues for: {', '.join(failed_groups)}"
+            message = f"Buffer well issues for: {', '.join(failed_groups)}"
 
         return {
             'passed': all_passed,
