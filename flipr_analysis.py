@@ -133,8 +133,14 @@ class BasePlotWindow(QMainWindow):
         self.grid_checkbox = QCheckBox("Show Grid")
         self.grid_checkbox.stateChanged.connect(self.toggle_grid)
 
+        # Add show legend checkbox - NEW
+        self.legend_checkbox = QCheckBox("Show Legend")
+        self.legend_checkbox.setChecked(False)  # Default to hidden
+        self.legend_checkbox.stateChanged.connect(self.toggle_legend)
+
         control_layout.addWidget(self.clear_button)
         control_layout.addWidget(self.grid_checkbox)
+        control_layout.addWidget(self.legend_checkbox)  # Add the new checkbox
         control_layout.addStretch()
 
         # Add widgets to main layout
@@ -142,6 +148,7 @@ class BasePlotWindow(QMainWindow):
         self.layout.addWidget(control_panel)
 
         self.plot_items = {}
+        self.legend_visible = False  # Track legend state
 
     def closeEvent(self, event):
         self.was_visible = False
@@ -159,7 +166,31 @@ class BasePlotWindow(QMainWindow):
         if well in self.plot_items:
             self.plot_widget.removeItem(self.plot_items[well])
         pen = pg.mkPen(color=color, width=2)
-        self.plot_items[well] = self.plot_widget.plot(times, values, pen=pen, name=well)
+
+        # Only add to legend if legend is visible
+        if self.legend_visible:
+            self.plot_items[well] = self.plot_widget.plot(times, values, pen=pen, name=well)
+        else:
+            # Don't create legend entry
+            self.plot_items[well] = self.plot_widget.plot(times, values, pen=pen)
+
+    def toggle_legend(self, state):
+        """Toggle legend visibility"""
+        self.legend_visible = bool(state)
+
+        if self.legend_visible:
+            # Show legend but don't resize plot
+            if self.plot_widget.plotItem.legend is None:
+                legend = self.plot_widget.addLegend(offset=(10, 10))
+                # Force legend to overlay on plot
+                legend.setParentItem(self.plot_widget.getPlotItem())
+                # Make background semi-transparent
+                legend.setBrush(pg.mkBrush(240, 240, 240, 180))
+        else:
+            # Remove legend
+            if self.plot_widget.plotItem.legend is not None:
+                self.plot_widget.plotItem.legend.scene().removeItem(self.plot_widget.plotItem.legend)
+                self.plot_widget.plotItem.legend = None
 
 class RawPlotWindow(BasePlotWindow):
     def __init__(self, parent=None):
@@ -687,11 +718,27 @@ class SummaryPlotWindow(QMainWindow):
         self.time_to_peak_plot.axes.tick_params(axis='x', rotation=45)
 
         # Set up layouts for all tabs
+        # Individual Traces tab
         individual_layout = QVBoxLayout(self.individual_tab)
+        individual_controls = QHBoxLayout()
+        self.individual_legend_btn = QPushButton("Toggle Legend")
+        self.individual_legend_btn.setCheckable(True)
+        self.individual_legend_btn.setChecked(False)
+        self.individual_legend_btn.clicked.connect(self.toggle_individual_legend)
+        individual_controls.addWidget(self.individual_legend_btn)
+        individual_layout.addLayout(individual_controls)
         individual_layout.addWidget(self.individual_plot)
         individual_layout.addWidget(NavigationToolbar(self.individual_plot, self.individual_tab))
 
+        # Mean Traces tab
         mean_layout = QVBoxLayout(self.mean_tab)
+        mean_controls = QHBoxLayout()
+        self.mean_legend_btn = QPushButton("Toggle Legend")
+        self.mean_legend_btn.setCheckable(True)
+        self.mean_legend_btn.setChecked(False)
+        self.mean_legend_btn.clicked.connect(self.toggle_mean_legend)
+        mean_controls.addWidget(self.mean_legend_btn)
+        mean_layout.addLayout(mean_controls)
         mean_layout.addWidget(self.mean_plot)
         mean_layout.addWidget(NavigationToolbar(self.mean_plot, self.mean_tab))
 
@@ -721,7 +768,68 @@ class SummaryPlotWindow(QMainWindow):
         settings_layout = QVBoxLayout(self.settings_tab)
         settings_layout.addWidget(self.settings_panel)
 
+        # Add storage for group info
+        self.individual_groups = []
+        self.mean_groups = []
+
         self.plot_items = {}  # Store plot items for reference
+
+    # Add to SummaryPlotWindow class
+    def toggle_individual_legend(self):
+        """Toggle legend for individual traces plot"""
+        if self.individual_legend_btn.isChecked():
+            # Save current position and bounds
+            box = self.individual_plot.axes.get_position()
+
+            # Remove existing legend if present
+            if self.individual_plot.axes.get_legend():
+                self.individual_plot.axes.get_legend().remove()
+
+            # Add hidden lines for all groups to create legend entries
+            for group_name, color in self.individual_groups:
+                self.individual_plot.axes.plot(
+                    [], [], color=color, linewidth=2, label=group_name
+                )
+
+            # Create legend with transparent background on top of plot
+            self.individual_plot.axes.legend(loc='upper right', framealpha=0.7)
+
+            # Maintain plot position
+            self.individual_plot.axes.set_position(box)
+        else:
+            # Remove legend if it exists
+            if self.individual_plot.axes.get_legend():
+                self.individual_plot.axes.get_legend().remove()
+
+        self.individual_plot.draw()
+
+    def toggle_mean_legend(self):
+        """Toggle legend for mean traces plot"""
+        if self.mean_legend_btn.isChecked():
+            # Save current position and bounds
+            box = self.mean_plot.axes.get_position()
+
+            # Remove existing legend if present
+            if self.mean_plot.axes.get_legend():
+                self.mean_plot.axes.get_legend().remove()
+
+            # Add hidden lines for all groups to create legend entries
+            for group_name, color in self.mean_groups:
+                self.mean_plot.axes.plot(
+                    [], [], color=color, linewidth=2, label=group_name
+                )
+
+            # Create legend with transparent background on top of plot
+            self.mean_plot.axes.legend(loc='upper right', framealpha=0.7)
+
+            # Maintain plot position
+            self.mean_plot.axes.set_position(box)
+        else:
+            # Remove legend if it exists
+            if self.mean_plot.axes.get_legend():
+                self.mean_plot.axes.get_legend().remove()
+
+        self.mean_plot.draw()
 
     def clear_plots(self):
         """Clear all plots"""
@@ -2526,6 +2634,11 @@ class WellPlateLabeler(QMainWindow):
         # Clear existing plots
         self.summary_plot_window.clear_plots()
 
+        # Clear existing groups
+        self.summary_plot_window.individual_groups = []
+        self.summary_plot_window.mean_groups = []
+
+
         # Get appropriate time values that match the processed data length
         if self.remove_artifact:
             times = self.processed_time_points  # Use already processed time points
@@ -2573,13 +2686,9 @@ class WellPlateLabeler(QMainWindow):
                             linewidth=1
                         )
 
-                # Add legend entry for this group (only once)
-                self.summary_plot_window.individual_plot.axes.plot(
-                    [], [],
-                    color=base_color,
-                    linewidth=2,
-                    label=group_name
-                )
+                # Store group information for legend
+                self.summary_plot_window.individual_groups.append((group_name, base_color))
+
 
                 # Calculate and plot mean trace
                 mean_trace = np.array(group_data.mean())
@@ -2591,9 +2700,13 @@ class WellPlateLabeler(QMainWindow):
                         times,
                         mean_trace,
                         color=base_color,
-                        linewidth=2,
-                        label=group_name
+                        linewidth=2
+                        # No label parameter
                     )
+
+                    # Store group information for legend
+                    self.summary_plot_window.mean_groups.append((group_name, base_color))
+
 
                     # Add error bands
                     self.summary_plot_window.mean_plot.axes.fill_between(
@@ -2772,8 +2885,8 @@ class WellPlateLabeler(QMainWindow):
                 continue
 
         # Add legends and apply settings
-        self.summary_plot_window.individual_plot.axes.legend()
-        self.summary_plot_window.mean_plot.axes.legend()
+        #self.summary_plot_window.individual_plot.axes.legend()
+        #self.summary_plot_window.mean_plot.axes.legend()
 
         # Update bar chart x-labels with group names
         all_group_names = list(grouped_data.keys())
