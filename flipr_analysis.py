@@ -5248,6 +5248,12 @@ class DiagnosisOptionsTab(QWidget):
                 checkbox.setChecked(True)
                 test_layout.addWidget(checkbox, 1)
 
+                # Add the stabilization checkbox
+                stab_checkbox = QCheckBox("Check Return to Baseline")
+                stab_checkbox.setChecked(True)
+                test_layout.addWidget(stab_checkbox)
+
+
                 # First parameter (all tests have at least one)
                 param1_label = QLabel(param1[0] + ":")
                 param1_input = QDoubleSpinBox()
@@ -5277,6 +5283,7 @@ class DiagnosisOptionsTab(QWidget):
                 # Store all widgets for this test
                 self.test_widgets[test_id] = {
                     'checkbox': checkbox,
+                    'stabilization_checkbox': stab_checkbox,
                     'param1_label': param1_label,
                     'param1_input': param1_input,
                     'param2_label': param2_label if param2[1] is not None else None,
@@ -5344,6 +5351,9 @@ class DiagnosisOptionsTab(QWidget):
             widgets['param1_input'].valueChanged.connect(lambda value, tid=test_id: self.update_test_config(tid))
             if widgets['param2_input']:
                 widgets['param2_input'].valueChanged.connect(lambda value, tid=test_id: self.update_test_config(tid))
+            # Add this line to connect the stabilization checkbox
+            if 'stabilization_checkbox' in widgets:
+                widgets['stabilization_checkbox'].stateChanged.connect(lambda state, tid=test_id: self.update_test_config(tid))
 
         # Add a visible "Apply Changes" button at the top of the form
         apply_button = QPushButton("Apply Parameter Changes")
@@ -5437,13 +5447,19 @@ class DiagnosisOptionsTab(QWidget):
             'value': self.autism_threshold.value()
         }
 
-        # Add this new section to update all test parameters
+        # Update test configurations
         for test_id, widgets in self.test_widgets.items():
-            self.live_config['tests'][test_id] = {
+            config = {
                 'enabled': widgets['checkbox'].isChecked(),
                 'param1': widgets['param1_input'].value(),
                 'param2': widgets['param2_input'].value() if widgets['param2_input'] else None
             }
+
+            # Add check_stabilization parameter if this test has the checkbox
+            if 'stabilization_checkbox' in widgets:
+                config['check_stabilization'] = widgets['stabilization_checkbox'].isChecked()
+
+            self.live_config['tests'][test_id] = config
 
     def update_test_config(self, test_id):
         """Update a specific test's configuration"""
@@ -5451,11 +5467,19 @@ class DiagnosisOptionsTab(QWidget):
             return
 
         widgets = self.test_widgets[test_id]
-        self.live_config['tests'][test_id] = {
+
+        config = {
             'enabled': widgets['checkbox'].isChecked(),
             'param1': widgets['param1_input'].value(),
             'param2': widgets['param2_input'].value() if widgets['param2_input'] else None
         }
+
+        # Add check_stabilization parameter if this test has the checkbox
+        if 'stabilization_checkbox' in widgets:
+            config['check_stabilization'] = widgets['stabilization_checkbox'].isChecked()
+
+        # Update the configuration
+        self.live_config['tests'][test_id] = config
 
         # Optional: Debug log for the specific test update
         self.logger.debug(f"Updated test config: {test_id} = {self.live_config['tests'][test_id]}")
@@ -5653,11 +5677,18 @@ class DiagnosisOptionsTab(QWidget):
                         if widgets['param2_input'] and 'param2' in test_config and test_config['param2'] is not None:
                             widgets['param2_input'].setValue(float(test_config['param2']))
 
+                        # Handle stabilization checkbox
+                        if 'stabilization_checkbox' in widgets:
+                            # Default to True for backward compatibility
+                            check_stabilization = test_config.get('check_stabilization', True)
+                            widgets['stabilization_checkbox'].setChecked(bool(check_stabilization))
+
                         self.logger.info(f"Updated test '{test_id}' UI")
                     else:
                         self.logger.warning(f"Test '{test_id}' not found in widgets")
                 except Exception as e:
                     self.logger.error(f"Error setting test '{test_id}': {str(e)}")
+
 
             # Unblock signals after setting all values
             self.blockSignals(False)
@@ -6012,7 +6043,9 @@ class DiagnosticTests:
                 # Execute the appropriate test directly - no indirection
                 try:
                     if test_id == 'check_artifact':
-                        result = self.check_artifact(param1, param2)
+                        # Get the check_stabilization parameter if available, default to True
+                        check_stabilization = test_config.get('check_stabilization', True)
+                        result = self.check_artifact(param1, param2, check_stabilization)
                     elif test_id == 'check_raw_baseline_min':
                         result = self.check_raw_min(results, param1)
                     elif test_id == 'check_raw_baseline_max':
@@ -6197,15 +6230,139 @@ class DiagnosticTests:
             self.logger.error(traceback.format_exc())
             return {'status': 'error', 'message': str(e)}
 
-    # Implement specific test methods - these don't need any changes
-    def check_artifact(self, max_change, max_frames):
-        """Check for injection artifact issues"""
-        # In a real implementation, would analyze the signal during injection
-        # For this demo, we'll assume the test passes
-        return {
-            'passed': True,
-            'message': "Injection artifact is within acceptable limits"
-        }
+
+    def check_artifact(self, max_change, max_frames, check_stabilization=True):
+        """Check for injection artifact issues in all wells including buffer wells
+
+        Parameters:
+        max_change: Maximum allowed signal change during injection
+        max_frames: Maximum frames to return to stable signal
+        check_stabilization: Whether to check for return to baseline
+        """
+        try:
+            # Get raw data and artifacts points
+            if self.parent.raw_data is None:
+                return {
+                    'passed': False,
+                    'message': "No raw data available for artifact analysis"
+                }
+
+            # Get artifact window parameters - convert to integers for indexing
+            artifact_start = int(self.parent.analysis_params['artifact_start'])
+            artifact_end = int(self.parent.analysis_params['artifact_end'])
+
+            # Convert max_frames to integer
+            max_frames_int = int(max_frames)
+
+            all_passed = True
+            failed_wells = []
+            stabilization_failed_wells = []
+
+            # Check each well that's been configured with valid data
+            for idx in range(96):
+                well_data = self.parent.well_data[idx]
+                well_id = well_data["well_id"]
+
+                # Skip wells without data
+                if not well_id or well_id not in self.parent.raw_data.index:
+                    continue
+
+                # Get well type for reference in results
+                label = well_data.get("label", "").lower()
+                well_type = "buffer" if "buffer" in label or "hbss" in label else "sample"
+
+                # Get raw data for this well
+                raw_trace = self.parent.raw_data.loc[well_id]
+
+                # Make sure we have enough data points
+                if len(raw_trace) <= artifact_end:
+                    self.logger.warning(f"Well {well_id} has insufficient data points")
+                    continue
+
+                # Calculate pre-artifact baseline - use integer indices
+                pre_artifact = raw_trace.iloc[:artifact_start].mean()
+
+                # Calculate max change during artifact window
+                artifact_window = raw_trace.iloc[artifact_start:artifact_end]
+                if pre_artifact == 0:  # Avoid division by zero
+                    max_artifact_change = 0
+                else:
+                    max_artifact_change = abs((artifact_window.max() - pre_artifact) / pre_artifact)
+
+                # Check if max change exceeds threshold
+                if max_artifact_change > max_change:
+                    all_passed = False
+                    failed_wells.append(f"{well_id} ({well_type}, change: {max_artifact_change:.2f})")
+                    continue  # Skip stabilization check for wells that already failed
+
+                # Only check stabilization if enabled
+                if check_stabilization:
+                    # Check frames to stabilize after artifact
+                    post_artifact = raw_trace.iloc[artifact_end:]
+                    stabilized = False
+                    frames_to_stabilize = 0
+
+                    # Make sure to convert this to an integer for range()
+                    max_check_frames = int(min(max_frames_int * 2, len(post_artifact)))
+
+                    for i in range(max_check_frames):
+                        # Check if signal has stabilized (within 10% of pre-injection baseline)
+                        if pre_artifact == 0:  # Avoid division by zero
+                            stabilized = True
+                            break
+
+                        if abs((post_artifact.iloc[i] - pre_artifact) / pre_artifact) < 0.1:
+                            stabilized = True
+                            frames_to_stabilize = i
+                            break
+
+                    # Log wells that fail the stabilization criteria
+                    if not stabilized:
+                        all_passed = False
+                        stabilization_failed_wells.append(f"{well_id} ({well_type}, didn't stabilize)")
+                    elif frames_to_stabilize > max_frames_int:
+                        all_passed = False
+                        stabilization_failed_wells.append(f"{well_id} ({well_type}, slow: {frames_to_stabilize} frames)")
+
+            # Initialize message variable
+            message = ""
+
+            # Prepare the message based on test results
+            if all_passed:
+                if check_stabilization:
+                    message = f"All wells have acceptable injection artifacts (change < {max_change}, recovery < {max_frames_int} frames)"
+                else:
+                    message = f"All wells have acceptable injection artifact changes (< {max_change})"
+            else:
+                if failed_wells:
+                    message = f"Artifact changes too large in wells: {', '.join(failed_wells[:5])}"
+                    if len(failed_wells) > 5:
+                        message += f" and {len(failed_wells) - 5} more"
+
+                if check_stabilization and stabilization_failed_wells:
+                    if message:  # Only add separator if we already have content
+                        message += "; "
+                    message += f"Stabilization issues in wells: {', '.join(stabilization_failed_wells[:5])}"
+                    if len(stabilization_failed_wells) > 5:
+                        message += f" and {len(stabilization_failed_wells) - 5} more"
+
+                # Safety check in case we have all_passed=False but no specific failures listed
+                if not message:
+                    message = "Unknown artifact issues detected"
+
+            return {
+                'passed': all_passed,
+                'message': message
+            }
+
+        except Exception as e:
+            self.logger.error(f"Error in check_artifact: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return {
+                'passed': False,
+                'message': f"Artifact check error: {str(e)}"
+            }
 
     def check_raw_min(self, results, min_value):
         """Check raw baseline minimum is above threshold"""
@@ -6240,7 +6397,7 @@ class DiagnosticTests:
             'message': message
         }
 
-    # [Include all other check_* methods here - no changes needed]
+
     def check_raw_max(self, results, max_value):
         """Check raw baseline maximum is below threshold"""
         all_passed = True
@@ -6379,13 +6536,111 @@ class DiagnosticTests:
         }
 
     def check_dff_return(self, results, max_deviation, time_point):
-        """Check ΔF/F₀ returns to baseline by specified time"""
-        # In a real implementation, would check end of trace values
-        # For this demo, we'll assume the test passes
-        return {
-            'passed': True,
-            'message': f"All signals return to baseline by {time_point}s"
-        }
+        """Check ΔF/F₀ returns to baseline by specified time
+
+        Parameters:
+        results: Analysis results dictionary
+        max_deviation: Maximum allowed deviation from baseline at end of trace
+        time_point: Time point (in seconds) to check for return to baseline
+        """
+        try:
+            if self.parent.dff_data is None:
+                return {
+                    'passed': False,
+                    'message': "No ΔF/F₀ data available"
+                }
+
+            all_passed = True
+            failed_groups = []
+
+            # Get time points
+            time_points = self.parent.processed_time_points
+
+            # Find index closest to the specified time point
+            check_idx = None
+            for i, t in enumerate(time_points):
+                if t >= time_point:
+                    check_idx = i
+                    break
+
+            if check_idx is None or check_idx >= len(time_points) - 1:
+                return {
+                    'passed': False,
+                    'message': f"Time point {time_point}s is beyond available data"
+                }
+
+            # Check each sample's ATP wells
+            for sample_id, sample_data in results['samples'].items():
+                if sample_data['status'] == 'ok':
+                    atp_data = sample_data['types'].get('atp')
+                    if atp_data and atp_data['status'] == 'ok':
+                        # Get ATP wells
+                        atp_wells = atp_data['wells']
+
+                        # Calculate end values
+                        end_values = []
+                        for well_id in atp_wells:
+                            if well_id in self.parent.dff_data.index:
+                                try:
+                                    # Take average of values from check_idx to end (or at least 5 frames)
+                                    end_window = min(5, len(self.parent.dff_data.columns) - check_idx)
+                                    end_value = abs(self.parent.dff_data.loc[well_id].iloc[check_idx:check_idx+end_window].mean())
+                                    end_values.append(end_value)
+                                except Exception as e:
+                                    self.logger.warning(f"Error processing well {well_id}: {str(e)}")
+
+                        if end_values:
+                            avg_end_value = sum(end_values) / len(end_values)
+                            if avg_end_value > max_deviation:
+                                all_passed = False
+                                failed_groups.append(f"{sample_id} (value: {avg_end_value:.3f})")
+
+            # Also check positive control
+            control_data = results['controls'].get('positive')
+            if control_data and control_data['status'] == 'ok':
+                atp_data = control_data['types'].get('atp')
+                if atp_data and atp_data['status'] == 'ok':
+                    # Get ATP wells
+                    atp_wells = atp_data['wells']
+
+                    # Calculate end values
+                    end_values = []
+                    for well_id in atp_wells:
+                        if well_id in self.parent.dff_data.index:
+                            try:
+                                # Take average of values from check_idx to end (or at least 5 frames)
+                                end_window = min(5, len(self.parent.dff_data.columns) - check_idx)
+                                end_value = abs(self.parent.dff_data.loc[well_id].iloc[check_idx:check_idx+end_window].mean())
+                                end_values.append(end_value)
+                            except Exception as e:
+                                self.logger.warning(f"Error processing well {well_id}: {str(e)}")
+
+                    if end_values:
+                        avg_end_value = sum(end_values) / len(end_values)
+                        if avg_end_value > max_deviation:
+                            all_passed = False
+                            failed_groups.append(f"positive control (value: {avg_end_value:.3f})")
+
+            # Prepare return message
+            actual_time = time_points[check_idx]
+            if all_passed:
+                message = f"All signals return to baseline (within {max_deviation} ΔF/F₀) by {actual_time:.1f}s"
+            else:
+                message = f"Signals do not return to baseline by {actual_time:.1f}s for: {', '.join(failed_groups)}"
+
+            return {
+                'passed': all_passed,
+                'message': message
+            }
+
+        except Exception as e:
+            self.logger.error(f"Error in check_dff_return: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return {
+                'passed': False,
+                'message': f"Return to baseline check error: {str(e)}"
+            }
 
     def check_peak_height(self, results, min_height, max_height):
         """Check peak height is within range"""
@@ -6423,13 +6678,131 @@ class DiagnosticTests:
         }
 
     def check_peak_width(self, results, min_width, max_width):
-        """Check peak width (FWHM) is within range"""
-        # In a real implementation, would calculate FWHM values
-        # For this demo, we'll assume the test passes
-        return {
-            'passed': True,
-            'message': f"All peak widths are within range ({min_width}s - {max_width}s)"
-        }
+        """Calculate Full Width at Half Maximum (FWHM) and check it is within range
+
+        Parameters:
+        results: Analysis results dictionary
+        min_width: Minimum acceptable peak width in seconds
+        max_width: Maximum acceptable peak width in seconds
+        """
+        try:
+            if self.parent.dff_data is None:
+                return {
+                    'passed': False,
+                    'message': "No ΔF/F₀ data available for peak width analysis"
+                }
+
+            # Get time points
+            time_points = self.parent.processed_time_points
+
+            all_passed = True
+            failed_groups = []
+
+            # Helper function to calculate FWHM
+            def calculate_fwhm(trace, time_points):
+                # Find the peak
+                peak_idx = trace.argmax()
+                peak_value = trace.iloc[peak_idx]
+                peak_time = time_points[peak_idx]
+
+                # Calculate half maximum
+                half_max = peak_value / 2
+
+                # Find rising edge (first point that crosses half max)
+                rising_idx = None
+                for i in range(peak_idx):
+                    if trace.iloc[i] >= half_max:
+                        rising_idx = i
+                        break
+
+                # Find falling edge (first point after peak that goes below half max)
+                falling_idx = None
+                for i in range(peak_idx + 1, len(trace)):
+                    if trace.iloc[i] <= half_max:
+                        falling_idx = i
+                        break
+
+                # If we couldn't find both edges, return None
+                if rising_idx is None or falling_idx is None:
+                    return None
+
+                # Calculate FWHM in seconds
+                rising_time = time_points[rising_idx]
+                falling_time = time_points[falling_idx]
+                fwhm = falling_time - rising_time
+
+                return fwhm
+
+            # Check each sample's ATP wells
+            for sample_id, sample_data in results['samples'].items():
+                if sample_data['status'] == 'ok':
+                    atp_data = sample_data['types'].get('atp')
+                    if atp_data and atp_data['status'] == 'ok':
+                        # Get ATP wells
+                        atp_wells = atp_data['wells']
+
+                        # Calculate FWHM for each well
+                        fwhm_values = []
+                        for well_id in atp_wells:
+                            if well_id in self.parent.dff_data.index:
+                                try:
+                                    trace = self.parent.dff_data.loc[well_id]
+                                    fwhm = calculate_fwhm(trace, time_points)
+                                    if fwhm is not None:
+                                        fwhm_values.append(fwhm)
+                                except Exception as e:
+                                    self.logger.warning(f"Error processing well {well_id}: {str(e)}")
+
+                        if fwhm_values:
+                            avg_fwhm = sum(fwhm_values) / len(fwhm_values)
+                            if avg_fwhm < min_width or avg_fwhm > max_width:
+                                all_passed = False
+                                failed_groups.append(f"{sample_id} (width: {avg_fwhm:.1f}s)")
+
+            # Also check positive control
+            control_data = results['controls'].get('positive')
+            if control_data and control_data['status'] == 'ok':
+                atp_data = control_data['types'].get('atp')
+                if atp_data and atp_data['status'] == 'ok':
+                    # Get ATP wells
+                    atp_wells = atp_data['wells']
+
+                    # Calculate FWHM for each well
+                    fwhm_values = []
+                    for well_id in atp_wells:
+                        if well_id in self.parent.dff_data.index:
+                            try:
+                                trace = self.parent.dff_data.loc[well_id]
+                                fwhm = calculate_fwhm(trace, time_points)
+                                if fwhm is not None:
+                                    fwhm_values.append(fwhm)
+                            except Exception as e:
+                                self.logger.warning(f"Error processing well {well_id}: {str(e)}")
+
+                    if fwhm_values:
+                        avg_fwhm = sum(fwhm_values) / len(fwhm_values)
+                        if avg_fwhm < min_width or avg_fwhm > max_width:
+                            all_passed = False
+                            failed_groups.append(f"positive control (width: {avg_fwhm:.1f}s)")
+
+            if all_passed:
+                message = f"All peak widths are within range ({min_width}s - {max_width}s)"
+            else:
+                message = f"Peak width outside range ({min_width}s - {max_width}s) for: {', '.join(failed_groups)}"
+
+            return {
+                'passed': all_passed,
+                'message': message
+            }
+
+        except Exception as e:
+            self.logger.error(f"Error in check_peak_width: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return {
+                'passed': False,
+                'message': f"Peak width check error: {str(e)}"
+            }
 
     def check_auc(self, results, min_auc, max_auc):
         """Check AUC is within range"""
